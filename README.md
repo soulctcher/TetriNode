@@ -1,6 +1,8 @@
 # TetriNode
 
-![TetriNode icon](docs/images/icon.png)
+<p>
+  <img src="docs/images/banner.png" width="50%">
+</p>
 
 A ComfyUI custom node pack that embeds a playable Tetris game inside a node UI, with image outputs for the live board and next-piece preview.
 
