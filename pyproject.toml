@@ -30,7 +30,7 @@ Documentation = "https://github.com/soulctcher/TetriNode/wiki"
 [tool.comfy]
 PublisherId = "soulctcher"
 DisplayName = "TetriNode"
-Icon = ""
+Icon = "https://github.com/soulctcher/TetriNode/blob/main/docs/images/icon.png"
 includes = [] 
 # "requires-comfyui" = ">=1.0.0"  # ComfyUI version compatibility
 
