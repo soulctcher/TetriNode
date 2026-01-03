@@ -59,7 +59,9 @@ Displayed inside the node UI and reflected in the game input handler.
 
 ### Installation (preferred)
 
-Install via ComfyUI Manager or the ComfyUI Registry once operational. (I will update the documentation once that is ready to go.)
+Install via ComfyUI Manager. Search for "TetriNode" and click install.
+The node pack is also available on the Comfy Registry site by ![clicking here](https://registry.comfy.org/publishers/soulctcher/nodes/TetriNode).
+
 
 ### Installation (alternative)
 
