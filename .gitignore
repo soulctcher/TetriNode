@@ -1,7 +1,9 @@
 __pycache__/
 .comfyui_test/
+.ruff_cache/
 knowledge-library/
 skills/
 tests/
 deploy_prod.sh
+node.zip
 *~
