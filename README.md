@@ -47,6 +47,7 @@ Optional node that provides keybindings.
 - `color_i`, `color_j`, `color_l`, `color_o`, `color_s`, `color_t`, `color_z`: Hex colors for each tetromino (e.g. `#55D6FF`)
 - `background_color`: Hex color for the board background (ignored when a background image is connected)
 - `ghost_piece`: Toggle for the ghost piece (default: on)
+- `lock_down_mode`: Lock down behavior (`extended`, `infinite`, `classic`, default: `extended`)
 
 **Outputs**
 

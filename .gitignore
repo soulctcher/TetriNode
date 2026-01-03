@@ -1,6 +1,7 @@
 __pycache__/
 .comfyui_test/
 .ruff_cache/
+.venv/
 knowledge-library/
 skills/
 tests/

@@ -263,6 +263,9 @@ def _default_state(seed):
         "score": 0,
         "lines_cleared_total": 0,
         "game_over": False,
+        "last_action": None,
+        "last_rotate_kick": None,
+        "tspin": "none",
     }
     state["piece"] = _spawn_piece(_pop_shape(state))
     state["next_piece_shape"] = _pop_shape(state)
@@ -300,6 +303,12 @@ def _deserialize_state(state_json, seed, enforce_seed=True):
         state["lines_cleared_total"] = 0
     if "game_over" not in state:
         state["game_over"] = False
+    if "last_action" not in state:
+        state["last_action"] = None
+    if "last_rotate_kick" not in state:
+        state["last_rotate_kick"] = None
+    if "tspin" not in state:
+        state["tspin"] = "none"
     return state
 
 
@@ -333,6 +342,89 @@ def _move(piece, dx, dy):
 
 def _rotate(piece, delta):
     return {"shape": piece["shape"], "rot": (piece["rot"] + delta) % 4, "x": piece["x"], "y": piece["y"]}
+
+
+def _kick_table(shape, rot_from, rot_to):
+    if shape == "O":
+        return [(0, 0)]
+    if shape == "I":
+        table = {
+            (0, 1): [(0, 0), (-2, 0), (1, 0), (-2, -1), (1, 2)],
+            (1, 0): [(0, 0), (2, 0), (-1, 0), (2, 1), (-1, -2)],
+            (1, 2): [(0, 0), (-1, 0), (2, 0), (-1, 2), (2, -1)],
+            (2, 1): [(0, 0), (1, 0), (-2, 0), (1, -2), (-2, 1)],
+            (2, 3): [(0, 0), (2, 0), (-1, 0), (2, 1), (-1, -2)],
+            (3, 2): [(0, 0), (-2, 0), (1, 0), (-2, -1), (1, 2)],
+            (3, 0): [(0, 0), (1, 0), (-2, 0), (1, -2), (-2, 1)],
+            (0, 3): [(0, 0), (-1, 0), (2, 0), (-1, 2), (2, -1)],
+        }
+        return table.get((rot_from, rot_to), [(0, 0)])
+    table = {
+        (0, 1): [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
+        (1, 0): [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
+        (1, 2): [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
+        (2, 1): [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
+        (2, 3): [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
+        (3, 2): [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
+        (3, 0): [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
+        (0, 3): [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
+    }
+    return table.get((rot_from, rot_to), [(0, 0)])
+
+
+def _rotate_with_kick(board, piece, delta):
+    rot_from = piece["rot"] % 4
+    rot_to = (rot_from + delta) % 4
+    kicks = _kick_table(piece["shape"], rot_from, rot_to)
+    for idx, (dx, dy) in enumerate(kicks):
+        candidate = {"shape": piece["shape"], "rot": rot_to, "x": piece["x"] + dx, "y": piece["y"] + dy}
+        if not _collides(board, candidate):
+            return candidate, idx
+    return piece, None
+
+
+def _corner_occupied(board, x, y):
+    if x < 0 or x >= BOARD_WIDTH or y < 0 or y >= BOARD_HEIGHT:
+        return True
+    return board[y][x] != 0
+
+
+def _tspin_type(board, piece, last_action, last_rotate_kick):
+    if piece["shape"] != "T" or last_action != "rotate":
+        return "none"
+    cx = piece["x"] + 1
+    cy = piece["y"] + 1
+    corners = {
+        "A": (cx - 1, cy - 1),
+        "B": (cx + 1, cy - 1),
+        "C": (cx - 1, cy + 1),
+        "D": (cx + 1, cy + 1),
+    }
+    rot = piece["rot"] % 4
+    if rot == 0:
+        front = ("A", "B")
+        back = ("C", "D")
+    elif rot == 1:
+        front = ("B", "D")
+        back = ("A", "C")
+    elif rot == 2:
+        front = ("C", "D")
+        back = ("A", "B")
+    else:
+        front = ("A", "C")
+        back = ("B", "D")
+    front_hits = sum(_corner_occupied(board, *corners[k]) for k in front)
+    back_hits = sum(_corner_occupied(board, *corners[k]) for k in back)
+    total_hits = front_hits + back_hits
+    if total_hits < 3:
+        return "none"
+    if last_rotate_kick == 4:
+        return "tspin"
+    if front_hits == 2 and back_hits >= 1:
+        return "tspin"
+    if back_hits == 2 and front_hits >= 1:
+        return "mini"
+    return "none"
 
 
 class TetriNode:
@@ -419,22 +511,27 @@ class TetriNode:
             moved = _move(piece, -1, 0)
             if not _collides(board, moved):
                 piece = moved
+                state_obj["last_action"] = "move"
         elif action == "right":
             moved = _move(piece, 1, 0)
             if not _collides(board, moved):
                 piece = moved
+                state_obj["last_action"] = "move"
         elif action in {"down", "soft_drop"}:
             moved = _move(piece, 0, 1)
             if not _collides(board, moved):
                 piece = moved
+                state_obj["last_action"] = "move"
         elif action == "rotate_cw":
-            rotated = _rotate(piece, 1)
-            if not _collides(board, rotated):
-                piece = rotated
+            piece, kick = _rotate_with_kick(board, piece, 1)
+            if piece["rot"] != state_obj["piece"]["rot"] or kick is not None:
+                state_obj["last_action"] = "rotate"
+                state_obj["last_rotate_kick"] = kick
         elif action == "rotate_ccw":
-            rotated = _rotate(piece, -1)
-            if not _collides(board, rotated):
-                piece = rotated
+            piece, kick = _rotate_with_kick(board, piece, -1)
+            if piece["rot"] != state_obj["piece"]["rot"] or kick is not None:
+                state_obj["last_action"] = "rotate"
+                state_obj["last_rotate_kick"] = kick
         elif action == "hard_drop":
             moved = _move(piece, 0, 1)
             while not _collides(board, moved):
@@ -445,8 +542,12 @@ class TetriNode:
             moved = _move(piece, 0, 1)
             if not _collides(board, moved):
                 piece = moved
+                state_obj["last_action"] = "move"
             else:
                 _lock_piece(board, piece)
+                state_obj["tspin"] = _tspin_type(
+                    board, piece, state_obj["last_action"], state_obj["last_rotate_kick"]
+                )
                 board, cleared = _clear_lines(board)
                 lines_cleared = cleared
                 state_obj["lines_cleared_total"] += cleared
@@ -458,6 +559,9 @@ class TetriNode:
             moved = _move(piece, 0, 1)
             if _collides(board, moved):
                 _lock_piece(board, piece)
+                state_obj["tspin"] = _tspin_type(
+                    board, piece, state_obj["last_action"], state_obj["last_rotate_kick"]
+                )
                 board, cleared = _clear_lines(board)
                 lines_cleared = cleared
                 state_obj["lines_cleared_total"] += cleared
@@ -497,6 +601,7 @@ class TetriNodeOptions:
                 "color_z": ("STRING", {"default": "#FF7676"}),
                 "background_color": ("STRING", {"default": "#32343E"}),
                 "ghost_piece": ("BOOLEAN", {"default": True}),
+                "lock_down_mode": (["extended", "infinite", "classic"], {"default": "extended"}),
             }
         }
 
@@ -515,6 +620,7 @@ class TetriNodeOptions:
         hard_drop,
         reset,
         pause,
+        lock_down_mode,
         color_i,
         color_j,
         color_l,
@@ -534,6 +640,7 @@ class TetriNodeOptions:
             "hard_drop": hard_drop,
             "reset": reset,
             "pause": pause,
+            "lock_down_mode": lock_down_mode,
             "color_i": color_i,
             "color_j": color_j,
             "color_l": color_l,

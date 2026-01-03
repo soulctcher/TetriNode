@@ -16,6 +16,8 @@ const CONTROL_GAP = 0;
 const PAUSE_GAP = 6;
 const CONTROL_MIN = 110;
 const CENTER_BIAS_X = 24;
+const DAS_MS = 300;
+const ARR_MS = 56;
 
 const COLORS = {
   I: "rgb(85,214,255)",
@@ -99,6 +101,10 @@ function newPiece(shape) {
   return { shape, rot: 0, x: 3, y: SPAWN_Y };
 }
 
+function pieceBottomY(piece) {
+  return Math.max(...pieceCells(piece).map(([, y]) => y));
+}
+
 function emptyBoard() {
   const board = [];
   for (let y = 0; y < GRID_H_TOTAL; y += 1) {
@@ -164,6 +170,16 @@ function createState(seed) {
     lockElapsed: 0,
     locking: false,
     softDrop: false,
+    lastAction: null,
+    lastRotateKick: null,
+    tspin: "none",
+    lockMoves: 0,
+    lowestY: pieceBottomY(piece),
+    moveDir: null,
+    moveHeldLeft: false,
+    moveHeldRight: false,
+    moveDasElapsed: 0,
+    moveArrElapsed: 0,
     timer: null,
   };
 }
@@ -179,10 +195,27 @@ function spawnNext(state) {
   state.piece = newPiece(state.nextShape);
   ensureBag(state);
   state.nextShape = state.bag.shift();
+  state.lockMoves = 0;
+  state.lowestY = pieceBottomY(state.piece);
+  state.locking = false;
+  state.lockElapsed = 0;
   if (collides(state.board, state.piece)) {
     state.gameOver = true;
     state.running = false;
   }
+}
+
+function updateLowestY(state) {
+  const bottom = pieceBottomY(state.piece);
+  if (state.lowestY == null || bottom > state.lowestY) {
+    state.lowestY = bottom;
+    state.lockMoves = 0;
+    if (state.locking) {
+      state.lockElapsed = 0;
+    }
+    return true;
+  }
+  return false;
 }
 
 function stepDown(state) {
@@ -191,6 +224,8 @@ function stepDown(state) {
     state.piece = moved;
     state.locking = false;
     state.lockElapsed = 0;
+    updateLowestY(state);
+    state.lastAction = "move";
     return;
   }
   if (!state.locking) {
@@ -199,8 +234,47 @@ function stepDown(state) {
   }
 }
 
+function cornerOccupied(board, x, y) {
+  if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H_TOTAL) return true;
+  return board[y][x] !== 0;
+}
+
+function tspinType(state) {
+  const piece = state.piece;
+  if (piece.shape !== "T" || state.lastAction !== "rotate") return "none";
+  const cx = piece.x + 1;
+  const cy = piece.y + 1;
+  const corners = {
+    A: [cx - 1, cy - 1],
+    B: [cx + 1, cy - 1],
+    C: [cx - 1, cy + 1],
+    D: [cx + 1, cy + 1],
+  };
+  const rot = piece.rot % 4;
+  let front = ["A", "B"];
+  let back = ["C", "D"];
+  if (rot === 1) {
+    front = ["B", "D"];
+    back = ["A", "C"];
+  } else if (rot === 2) {
+    front = ["C", "D"];
+    back = ["A", "B"];
+  } else if (rot === 3) {
+    front = ["A", "C"];
+    back = ["B", "D"];
+  }
+  const frontHits = front.reduce((acc, k) => acc + (cornerOccupied(state.board, ...corners[k]) ? 1 : 0), 0);
+  const backHits = back.reduce((acc, k) => acc + (cornerOccupied(state.board, ...corners[k]) ? 1 : 0), 0);
+  if (frontHits + backHits < 3) return "none";
+  if (state.lastRotateKick === 4) return "tspin";
+  if (frontHits === 2 && backHits >= 1) return "tspin";
+  if (backHits === 2 && frontHits >= 1) return "mini";
+  return "none";
+}
+
 function settlePiece(state) {
   lockPiece(state.board, state.piece);
+  state.tspin = tspinType(state);
   const result = clearLines(state.board);
   state.board = result.board;
   if (result.cleared > 0) {
@@ -223,6 +297,7 @@ function serializeState(state) {
     score: state.score,
     lines_cleared_total: state.lines,
     game_over: state.gameOver,
+    tspin: state.tspin,
   });
 }
 
@@ -249,28 +324,73 @@ function updateBackendState(node) {
   }
 }
 
-function move(state, dx, dy) {
+function move(state, dx, dy, opts = {}) {
   const moved = { ...state.piece, x: state.piece.x + dx, y: state.piece.y + dy };
   if (!collides(state.board, moved)) {
     state.piece = moved;
-    state.locking = false;
-    state.lockElapsed = 0;
+    if (!opts.skipLastAction) {
+      state.lastAction = "move";
+    }
+    updateLowestY(state);
     return true;
   }
   return false;
 }
 
 function rotate(state, delta) {
-  const rotated = { ...state.piece, rot: (state.piece.rot + delta + 4) % 4 };
-  if (!collides(state.board, rotated)) {
-    state.piece = rotated;
-    state.locking = false;
-    state.lockElapsed = 0;
+  const rotated = rotateWithKick(state.board, state.piece, delta);
+  if (rotated) {
+    state.piece = rotated.piece;
+    state.lastAction = "rotate";
+    state.lastRotateKick = rotated.kick;
+    updateLowestY(state);
+    return true;
   }
+  return false;
+}
+
+function kickTable(shape, fromRot, toRot) {
+  if (shape === "O") return [[0, 0]];
+  if (shape === "I") {
+    const table = {
+      "0>1": [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2]],
+      "1>0": [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2]],
+      "1>2": [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]],
+      "2>1": [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1]],
+      "2>3": [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2]],
+      "3>2": [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2]],
+      "3>0": [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1]],
+      "0>3": [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]],
+    };
+    return table[`${fromRot}>${toRot}`] || [[0, 0]];
+  }
+  const table = {
+    "0>1": [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+    "1>0": [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+    "1>2": [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+    "2>1": [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+    "2>3": [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+    "3>2": [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+    "3>0": [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+    "0>3": [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  };
+  return table[`${fromRot}>${toRot}`] || [[0, 0]];
+}
+
+function rotateWithKick(board, piece, delta) {
+  const fromRot = piece.rot % 4;
+  const toRot = (fromRot + delta + 4) % 4;
+  const kicks = kickTable(piece.shape, fromRot, toRot);
+  for (let i = 0; i < kicks.length; i += 1) {
+    const [dx, dy] = kicks[i];
+    const candidate = { ...piece, rot: toRot, x: piece.x + dx, y: piece.y + dy };
+    if (!collides(board, candidate)) return { piece: candidate, kick: i };
+  }
+  return null;
 }
 
 function hardDrop(state) {
-  while (move(state, 0, 1)) {
+  while (move(state, 0, 1, { skipLastAction: true })) {
     // keep dropping
   }
   settlePiece(state);
@@ -356,6 +476,78 @@ function getLayout(node) {
   };
 
   return { boardX, boardY, boardW, boardH, sideX, sideY, blockSize };
+}
+
+function getLockMode(node) {
+  const defaultMode = "extended";
+  const normalize = (value) => {
+    const raw = `${value}`.trim().toLowerCase();
+    if (!raw) return null;
+    if (["extended", "infinite", "classic"].includes(raw)) return raw;
+    return null;
+  };
+  const linked = getLinkedOptionsNode(node);
+  if (linked?.widgets) {
+    const widget = linked.widgets.find((w) => w.name === "lock_down_mode");
+    const parsed = normalize(widget?.value);
+    if (parsed) return parsed;
+  }
+  if (node?.widgets) {
+    const widget = node.widgets.find((w) => w.name === "lock_down_mode");
+    const parsed = normalize(widget?.value);
+    if (parsed) return parsed;
+  }
+  return defaultMode;
+}
+
+function applyLockModeAfterAction(state, mode) {
+  const onSurface = collides(state.board, { ...state.piece, y: state.piece.y + 1 });
+  if (!onSurface) {
+    state.locking = false;
+    state.lockElapsed = 0;
+    return;
+  }
+  state.locking = true;
+  if (mode === "classic") {
+    return;
+  }
+  if (mode === "infinite") {
+    state.lockElapsed = 0;
+    return;
+  }
+  if (state.lockMoves < 15) {
+    state.lockMoves += 1;
+    state.lockElapsed = 0;
+  } else {
+    state.lockElapsed = state.lockDelayMs;
+  }
+}
+
+function setMoveDirection(state, dir) {
+  if (state.moveDir === dir) return;
+  state.moveDir = dir;
+  state.moveDasElapsed = 0;
+  state.moveArrElapsed = 0;
+}
+
+function clearMoveDirection(state) {
+  state.moveDir = null;
+  state.moveDasElapsed = 0;
+  state.moveArrElapsed = 0;
+}
+
+function updateAutoRepeat(state, node, deltaMs) {
+  if (!state.moveDir) return;
+  state.moveDasElapsed += deltaMs;
+  if (state.moveDasElapsed < DAS_MS) return;
+  state.moveArrElapsed += deltaMs;
+  while (state.moveArrElapsed >= ARR_MS) {
+    state.moveArrElapsed -= ARR_MS;
+    const dx = state.moveDir === "left" ? -1 : 1;
+    if (move(state, dx, 0)) {
+      applyLockModeAfterAction(state, getLockMode(node));
+    }
+  }
 }
 
 function drawBlockSized(ctx, x, y, size, color) {
@@ -776,8 +968,16 @@ function ensureTimer(node) {
   if (!live || live.state.timer) return;
   live.state.timer = setInterval(() => {
     if (!live.state.running || live.state.gameOver) return;
+    const lockMode = getLockMode(node);
+    updateAutoRepeat(live.state, node, 50);
     live.state.elapsed += 50;
     if (live.state.locking) {
+      if (lockMode === "extended" && live.state.lockMoves >= 15) {
+        settlePiece(live.state);
+        updateBackendState(node);
+        node.setDirtyCanvas(true, true);
+        return;
+      }
       live.state.lockElapsed += 50;
       if (live.state.lockElapsed >= live.state.lockDelayMs) {
         settlePiece(live.state);
@@ -789,6 +989,12 @@ function ensureTimer(node) {
     if (live.state.elapsed >= live.state.dropMs) {
       live.state.elapsed = 0;
       stepDown(live.state);
+      if (lockMode === "extended" && live.state.lockMoves >= 15 && live.state.locking) {
+        settlePiece(live.state);
+        updateBackendState(node);
+        node.setDirtyCanvas(true, true);
+        return;
+      }
       updateBackendState(node);
       node.setDirtyCanvas(true, true);
     }
@@ -842,16 +1048,24 @@ function handleKey(event) {
   let handled = true;
   switch (key) {
     case bindings.moveLeft:
-      move(state, -1, 0);
+      state.moveHeldLeft = true;
+      setMoveDirection(state, "left");
+      if (move(state, -1, 0)) applyLockModeAfterAction(state, getLockMode(node));
       break;
     case bindings.moveRight:
-      move(state, 1, 0);
+      state.moveHeldRight = true;
+      setMoveDirection(state, "right");
+      if (move(state, 1, 0)) applyLockModeAfterAction(state, getLockMode(node));
       break;
     case bindings.rotateCw:
-      rotate(state, 1);
+      if (rotate(state, 1)) {
+        applyLockModeAfterAction(state, getLockMode(node));
+      }
       break;
     case bindings.rotateCcw:
-      rotate(state, -1);
+      if (rotate(state, -1)) {
+        applyLockModeAfterAction(state, getLockMode(node));
+      }
       break;
     case bindings.softDrop:
       state.softDrop = true;
@@ -886,6 +1100,22 @@ function handleKeyUp(event) {
   if (!live || live.state.gameOver) return;
   const bindings = getControlBindings(node);
   const key = event.key.toLowerCase();
+  if (key === bindings.moveLeft) {
+    live.state.moveHeldLeft = false;
+    if (live.state.moveHeldRight) {
+      setMoveDirection(live.state, "right");
+    } else {
+      clearMoveDirection(live.state);
+    }
+  }
+  if (key === bindings.moveRight) {
+    live.state.moveHeldRight = false;
+    if (live.state.moveHeldLeft) {
+      setMoveDirection(live.state, "left");
+    } else {
+      clearMoveDirection(live.state);
+    }
+  }
   if (key !== bindings.softDrop) return;
   live.state.softDrop = false;
   live.state.dropMs = live.state.baseDropMs;
@@ -915,9 +1145,9 @@ function applyWidgetHiding(node) {
 
 function ensureOptionsDivider(node) {
   if (!node?.widgets) return;
-  if (node.__tetrisDividerAdded) return;
-  const pauseIndex = node.widgets.findIndex((w) => w.name === "pause");
-  if (pauseIndex < 0) return;
+  const insertAfter = node.widgets.findIndex((w) => w.name === "pause");
+  if (insertAfter < 0) return;
+  const existingIndex = node.widgets.findIndex((w) => w.name === "divider");
   const divider = {
     type: "tetrinode_divider",
     name: "divider",
@@ -933,7 +1163,10 @@ function ensureOptionsDivider(node) {
       return [width, 12];
     },
   };
-  node.widgets.splice(pauseIndex + 1, 0, divider);
+  if (existingIndex >= 0) {
+    node.widgets.splice(existingIndex, 1);
+  }
+  node.widgets.splice(insertAfter + 1, 0, divider);
   node.__tetrisDividerAdded = true;
   node.setDirtyCanvas(true, true);
 }
@@ -1317,6 +1550,10 @@ app.registerExtension({
     if (node?.comfyClass === "TetriNodeOptions") {
       ensureOptionsDivider(node);
       ensureGhostDivider(node);
+      setTimeout(() => {
+        ensureOptionsDivider(node);
+        ensureGhostDivider(node);
+      }, 0);
       return;
     }
     if (node?.comfyClass !== NODE_CLASS) return;
@@ -1361,6 +1598,25 @@ app.registerExtension({
     updateBackendState(node);
     ensureTimer(node);
     ensureBackgroundUpdater(node);
+    if (!node.__tetrisLive.api) {
+      node.__tetrisLive.api = {
+        rotateCw: () => {
+          rotate(node.__tetrisLive.state, 1);
+          updateBackendState(node);
+          node.setDirtyCanvas(true, true);
+        },
+        rotateCcw: () => {
+          rotate(node.__tetrisLive.state, -1);
+          updateBackendState(node);
+          node.setDirtyCanvas(true, true);
+        },
+        hardDrop: () => {
+          hardDrop(node.__tetrisLive.state);
+          updateBackendState(node);
+          node.setDirtyCanvas(true, true);
+        },
+      };
+    }
   },
   async setup() {
     window.addEventListener("keydown", handleKey, true);
