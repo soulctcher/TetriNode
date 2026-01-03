@@ -144,12 +144,15 @@ function clearLines(board) {
   return { board: remaining, cleared };
 }
 
-function createState(seed) {
+function createState(seed, startLevel = 1, levelProgression = "fixed") {
   const rng = createRng(seed);
   const bag = shuffledBag(rng);
   const piece = newPiece(bag.shift());
   const nextShape = bag.shift();
-  const baseDropMs = 600;
+  const start = clampLevel(startLevel);
+  const level = start;
+  const progression = levelProgression === "variable" ? "variable" : "fixed";
+  const baseDropMs = Math.max(1, Math.round(fallSpeedSeconds(level) * 1000));
   return {
     seed,
     rng,
@@ -160,6 +163,9 @@ function createState(seed) {
     board: emptyBoard(),
     score: 0,
     lines: 0,
+    startLevel: start,
+    level,
+    levelProgression: progression,
     running: false,
     started: false,
     gameOver: false,
@@ -184,6 +190,43 @@ function createState(seed) {
   };
 }
 
+function fallSpeedSeconds(level) {
+  const lvl = Math.max(1, Math.min(15, Math.floor(level || 1)));
+  const base = 0.8 - (lvl - 1) * 0.007;
+  return Math.pow(base, lvl - 1);
+}
+
+function clampLevel(value) {
+  const parsed = Number.parseInt(`${value}`, 10);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(1, Math.min(15, parsed));
+}
+
+function updateLevel(state) {
+  let target = state.startLevel;
+  const progression = state.levelProgression === "variable" ? "variable" : "fixed";
+  if (progression === "fixed") {
+    target = clampLevel(state.startLevel + Math.floor(state.lines / 10));
+  } else {
+    let remaining = state.lines;
+    let lvl = state.startLevel;
+    while (lvl < 15) {
+      const goal = 5 * lvl;
+      if (remaining < goal) break;
+      remaining -= goal;
+      lvl += 1;
+    }
+    target = clampLevel(lvl);
+  }
+  if (state.level !== target) {
+    state.level = target;
+  }
+  state.baseDropMs = Math.max(1, Math.round(fallSpeedSeconds(state.level) * 1000));
+  state.dropMs = state.softDrop
+    ? Math.max(1, Math.floor(state.baseDropMs / 20))
+    : state.baseDropMs;
+}
+
 function ensureBag(state) {
   if (state.bag.length === 0) {
     state.bag = shuffledBag(state.rng);
@@ -199,6 +242,7 @@ function spawnNext(state) {
   state.lowestY = pieceBottomY(state.piece);
   state.locking = false;
   state.lockElapsed = 0;
+  updateLevel(state);
   if (collides(state.board, state.piece)) {
     state.gameOver = true;
     state.running = false;
@@ -280,6 +324,7 @@ function settlePiece(state) {
   if (result.cleared > 0) {
     state.lines += result.cleared;
   }
+  updateLevel(state);
   state.locking = false;
   state.lockElapsed = 0;
   spawnNext(state);
@@ -292,6 +337,9 @@ function serializeState(state) {
     bag: state.bag.slice(),
     bag_count: state.bagCount,
     seed: state.seed,
+    start_level: state.startLevel,
+    level: state.level,
+    level_progression: state.levelProgression,
     piece: { ...state.piece },
     next_piece_shape: state.nextShape,
     score: state.score,
@@ -768,6 +816,7 @@ function drawNode(node, ctx) {
   if (!node.__tetrisWidgetsHidden) {
     applyWidgetHiding(node);
   }
+  syncStartLevel(live.state, node);
   syncSeed(live.state, node);
   const { state } = live;
   const { boardX, boardY, boardW, boardH, sideX, sideY, blockSize } = getLayout(node);
@@ -809,14 +858,18 @@ function drawNode(node, ctx) {
   const scoreFontSize = Math.max(10, Math.floor(blockSize * 0.55));
   ctx.fillStyle = COLORS.Text;
   const lineGap = Math.floor(scoreFontSize * 0.6);
-  const linesLabelY = sideY + scoreFontSize + 1;
+  const levelLabelY = sideY + scoreFontSize + 1;
+  const levelValueY = levelLabelY + scoreFontSize + 2;
+  const linesLabelY = levelValueY + lineGap + scoreFontSize;
   const linesValueY = linesLabelY + scoreFontSize + 2;
   const scoreLabelY = linesValueY + lineGap + scoreFontSize;
   const scoreValueY = scoreLabelY + scoreFontSize + 2;
   ctx.font = `bold ${scoreFontSize}px sans-serif`;
+  ctx.fillText("Level:", sideX, levelLabelY);
   ctx.fillText("Lines Cleared:", sideX, linesLabelY);
   ctx.fillText("Score:", sideX, scoreLabelY);
   ctx.font = `${scoreFontSize}px sans-serif`;
+  ctx.fillText(`${state.level}`, sideX, levelValueY);
   ctx.fillText(`${state.lines}`, sideX, linesValueY);
   ctx.fillText(`${state.score}`, sideX, scoreValueY);
   const nextLabelY = scoreValueY + scoreFontSize + lineGap * 2;
@@ -926,7 +979,7 @@ function syncSeed(state, node) {
         return;
       }
       stopTimer(node);
-      const nextState = createState(nextSeed);
+      const nextState = createState(nextSeed, state.startLevel);
       nextState.running = false;
       nextState.started = false;
       node.__tetrisLive.state = nextState;
@@ -939,11 +992,73 @@ function syncSeed(state, node) {
   }
 }
 
+function getStartLevel(node) {
+  const defaultValue = 1;
+  const parseLevel = (value) => {
+    const parsed = Number.parseInt(`${value}`, 10);
+    if (!Number.isFinite(parsed)) return null;
+    return clampLevel(parsed);
+  };
+  const linked = getLinkedOptionsNode(node);
+  if (linked?.widgets) {
+    const widget = linked.widgets.find((w) => w.name === "start_level");
+    const parsed = parseLevel(widget?.value);
+    if (parsed != null) return parsed;
+  }
+  if (node?.widgets) {
+    const widget = node.widgets.find((w) => w.name === "start_level");
+    const parsed = parseLevel(widget?.value);
+    if (parsed != null) return parsed;
+  }
+  return defaultValue;
+}
+
+function getLevelProgression(node) {
+  const normalize = (value) => {
+    const raw = `${value}`.trim().toLowerCase();
+    if (raw === "variable") return "variable";
+    return "fixed";
+  };
+  const linked = getLinkedOptionsNode(node);
+  if (linked?.widgets) {
+    const widget = linked.widgets.find((w) => w.name === "level_progression");
+    if (widget) return normalize(widget.value);
+  }
+  if (node?.widgets) {
+    const widget = node.widgets.find((w) => w.name === "level_progression");
+    if (widget) return normalize(widget.value);
+  }
+  return "fixed";
+}
+
+function syncStartLevel(state, node) {
+  const startLevel = getStartLevel(node);
+  const progression = getLevelProgression(node);
+  if (startLevel !== state.startLevel || progression !== state.levelProgression) {
+    if (state.started) {
+      return;
+    }
+    stopTimer(node);
+    const nextState = createState(state.seed, startLevel, progression);
+    nextState.running = false;
+    nextState.started = false;
+    node.__tetrisLive.state = nextState;
+    updateBackendState(node);
+    ensureTimer(node);
+    node.setDirtyCanvas(true, true);
+  } else {
+    state.levelProgression = progression;
+    updateLevel(state);
+  }
+}
+
 function resetNode(node) {
   const live = node.__tetrisLive;
   if (!live) return;
   const seed = getSeedValue(node, { allowRandomize: true });
-  live.state = createState(seed ?? live.state.seed);
+  const startLevel = getStartLevel(node);
+  const progression = getLevelProgression(node);
+  live.state = createState(seed ?? live.state.seed, startLevel, progression);
   live.state.started = true;
   live.state.running = true;
   updateBackendState(node);
@@ -1043,6 +1158,11 @@ function handleKey(event) {
   const state = live.state;
   const bindings = getControlBindings(node);
   const key = event.key.toLowerCase();
+  if (event.repeat && (key === bindings.rotateCw || key === bindings.rotateCcw)) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   const canAct = state.running || key === bindings.pause || key === bindings.reset;
   if (!canAct) return;
   let handled = true;
@@ -1560,7 +1680,9 @@ app.registerExtension({
     applyWidgetHiding(node);
     ensureSeedControlWidget(node);
     const seed = getSeedValue(node, { allowRandomize: true });
-    node.__tetrisLive = { state: createState(seed ?? 0) };
+    const startLevel = getStartLevel(node);
+    const progression = getLevelProgression(node);
+    node.__tetrisLive = { state: createState(seed ?? 0, startLevel, progression) };
 
     const boardW = GRID_W * BLOCK;
     const boardH = GRID_H_VISIBLE * BLOCK;

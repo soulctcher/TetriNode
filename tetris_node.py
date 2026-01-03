@@ -258,6 +258,8 @@ def _default_state(seed):
         "bag": [],
         "bag_count": 0,
         "seed": seed,
+        "start_level": 1,
+        "level": 1,
         "piece": None,
         "next_piece_shape": None,
         "score": 0,
@@ -272,6 +274,11 @@ def _default_state(seed):
     if _collides(state["board"], state["piece"]):
         state["game_over"] = True
     return state
+
+
+def _calc_level(start_level, lines_cleared_total):
+    start = max(1, min(15, int(start_level)))
+    return max(1, min(15, start + int(lines_cleared_total // 10)))
 
 
 def _deserialize_state(state_json, seed, enforce_seed=True):
@@ -303,6 +310,10 @@ def _deserialize_state(state_json, seed, enforce_seed=True):
         state["lines_cleared_total"] = 0
     if "game_over" not in state:
         state["game_over"] = False
+    if "start_level" not in state:
+        state["start_level"] = 1
+    if "level" not in state:
+        state["level"] = state.get("start_level", 1)
     if "last_action" not in state:
         state["last_action"] = None
     if "last_rotate_kick" not in state:
@@ -551,6 +562,10 @@ class TetriNode:
                 board, cleared = _clear_lines(board)
                 lines_cleared = cleared
                 state_obj["lines_cleared_total"] += cleared
+                state_obj["level"] = _calc_level(
+                    state_obj.get("start_level", 1),
+                    state_obj["lines_cleared_total"],
+                )
                 piece = _spawn_piece(next_shape)
                 next_shape = _pop_shape(state_obj)
                 if _collides(board, piece):
@@ -565,6 +580,10 @@ class TetriNode:
                 board, cleared = _clear_lines(board)
                 lines_cleared = cleared
                 state_obj["lines_cleared_total"] += cleared
+                state_obj["level"] = _calc_level(
+                    state_obj.get("start_level", 1),
+                    state_obj["lines_cleared_total"],
+                )
                 piece = _spawn_piece(next_shape)
                 next_shape = _pop_shape(state_obj)
                 if _collides(board, piece):
@@ -602,6 +621,8 @@ class TetriNodeOptions:
                 "background_color": ("STRING", {"default": "#32343E"}),
                 "ghost_piece": ("BOOLEAN", {"default": True}),
                 "lock_down_mode": (["extended", "infinite", "classic"], {"default": "extended"}),
+                "start_level": ("INT", {"default": 1, "min": 1, "max": 15}),
+                "level_progression": (["fixed", "variable"], {"default": "fixed"}),
             }
         }
 
@@ -621,6 +642,8 @@ class TetriNodeOptions:
         reset,
         pause,
         lock_down_mode,
+        start_level,
+        level_progression,
         color_i,
         color_j,
         color_l,
@@ -641,6 +664,8 @@ class TetriNodeOptions:
             "reset": reset,
             "pause": pause,
             "lock_down_mode": lock_down_mode,
+            "start_level": start_level,
+            "level_progression": level_progression,
             "color_i": color_i,
             "color_j": color_j,
             "color_l": color_l,

@@ -48,6 +48,8 @@ Optional node that provides keybindings.
 - `background_color`: Hex color for the board background (ignored when a background image is connected)
 - `ghost_piece`: Toggle for the ghost piece (default: on)
 - `lock_down_mode`: Lock down behavior (`extended`, `infinite`, `classic`, default: `extended`)
+- `start_level`: Starting level (1-15, default: 1)
+- `level_progression`: Level goal system (`fixed` or `variable`, default: `fixed`)
 
 **Outputs**
 
