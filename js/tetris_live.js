@@ -4,7 +4,10 @@ const EXT_NAME = "tetrinode.live";
 const NODE_CLASS = "TetriNode";
 
 const GRID_W = 10;
-const GRID_H = 20;
+const GRID_H_TOTAL = 40;
+const GRID_H_VISIBLE = 20;
+const HIDDEN_ROWS = GRID_H_TOTAL - GRID_H_VISIBLE;
+const SPAWN_Y = HIDDEN_ROWS - 2;
 const PREVIEW_GRID = 4;
 const BLOCK = 16;
 const PADDING = 12;
@@ -93,12 +96,12 @@ function shuffledBag(rng) {
 }
 
 function newPiece(shape) {
-  return { shape, rot: 0, x: 3, y: 0 };
+  return { shape, rot: 0, x: 3, y: SPAWN_Y };
 }
 
 function emptyBoard() {
   const board = [];
-  for (let y = 0; y < GRID_H; y += 1) {
+  for (let y = 0; y < GRID_H_TOTAL; y += 1) {
     const row = new Array(GRID_W).fill(0);
     board.push(row);
   }
@@ -112,7 +115,7 @@ function pieceCells(piece) {
 
 function collides(board, piece) {
   for (const [x, y] of pieceCells(piece)) {
-    if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return true;
+    if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H_TOTAL) return true;
     if (board[y][x]) return true;
   }
   return false;
@@ -120,7 +123,7 @@ function collides(board, piece) {
 
 function lockPiece(board, piece) {
   for (const [x, y] of pieceCells(piece)) {
-    if (y >= 0 && y < GRID_H && x >= 0 && x < GRID_W) {
+    if (y >= 0 && y < GRID_H_TOTAL && x >= 0 && x < GRID_W) {
       board[y][x] = piece.shape;
     }
   }
@@ -128,8 +131,8 @@ function lockPiece(board, piece) {
 
 function clearLines(board) {
   const remaining = board.filter((row) => row.some((cell) => cell === 0));
-  const cleared = GRID_H - remaining.length;
-  while (remaining.length < GRID_H) {
+  const cleared = GRID_H_TOTAL - remaining.length;
+  while (remaining.length < GRID_H_TOTAL) {
     remaining.unshift(new Array(GRID_W).fill(0));
   }
   return { board: remaining, cleared };
@@ -140,6 +143,7 @@ function createState(seed) {
   const bag = shuffledBag(rng);
   const piece = newPiece(bag.shift());
   const nextShape = bag.shift();
+  const baseDropMs = 600;
   return {
     seed,
     rng,
@@ -153,8 +157,13 @@ function createState(seed) {
     running: false,
     started: false,
     gameOver: false,
-    dropMs: 600,
+    baseDropMs,
+    dropMs: baseDropMs,
     elapsed: 0,
+    lockDelayMs: 500,
+    lockElapsed: 0,
+    locking: false,
+    softDrop: false,
     timer: null,
   };
 }
@@ -180,14 +189,25 @@ function stepDown(state) {
   const moved = { ...state.piece, y: state.piece.y + 1 };
   if (!collides(state.board, moved)) {
     state.piece = moved;
+    state.locking = false;
+    state.lockElapsed = 0;
     return;
   }
+  if (!state.locking) {
+    state.locking = true;
+    state.lockElapsed = 0;
+  }
+}
+
+function settlePiece(state) {
   lockPiece(state.board, state.piece);
   const result = clearLines(state.board);
   state.board = result.board;
   if (result.cleared > 0) {
     state.lines += result.cleared;
   }
+  state.locking = false;
+  state.lockElapsed = 0;
   spawnNext(state);
 }
 
@@ -233,6 +253,8 @@ function move(state, dx, dy) {
   const moved = { ...state.piece, x: state.piece.x + dx, y: state.piece.y + dy };
   if (!collides(state.board, moved)) {
     state.piece = moved;
+    state.locking = false;
+    state.lockElapsed = 0;
     return true;
   }
   return false;
@@ -242,6 +264,8 @@ function rotate(state, delta) {
   const rotated = { ...state.piece, rot: (state.piece.rot + delta + 4) % 4 };
   if (!collides(state.board, rotated)) {
     state.piece = rotated;
+    state.locking = false;
+    state.lockElapsed = 0;
   }
 }
 
@@ -249,7 +273,7 @@ function hardDrop(state) {
   while (move(state, 0, 1)) {
     // keep dropping
   }
-  stepDown(state);
+  settlePiece(state);
 }
 
 function drawBlock(ctx, x, y, color) {
@@ -313,13 +337,13 @@ function getLayout(node) {
   let blockSize = BLOCK;
   for (let i = 0; i < 2; i += 1) {
     const boardW = Math.max(0, innerW - sideW - PADDING);
-    blockSize = Math.floor(Math.min(boardW / GRID_W, innerH / GRID_H));
+    blockSize = Math.floor(Math.min(boardW / GRID_W, innerH / GRID_H_VISIBLE));
     blockSize = Math.max(6, blockSize);
     sideW = Math.max(PREVIEW_GRID * blockSize + PADDING * 2, 120);
   }
 
   const boardW = blockSize * GRID_W;
-  const boardH = blockSize * GRID_H;
+  const boardH = blockSize * GRID_H_VISIBLE;
   const totalW = boardW + sideW + PADDING;
   const boardX = Math.max(PADDING, (node.size[0] - totalW) / 2 + CENTER_BIAS_X);
   const boardY = topY;
@@ -337,6 +361,46 @@ function getLayout(node) {
 function drawBlockSized(ctx, x, y, size, color) {
   ctx.fillStyle = color;
   ctx.fillRect(x, y, size - 1, size - 1);
+}
+
+function ghostLandingY(state) {
+  const ghost = { ...state.piece };
+  while (!collides(state.board, { ...ghost, y: ghost.y + 1 })) {
+    ghost.y += 1;
+  }
+  return ghost.y;
+}
+
+function drawGhostPiece(ctx, state, boardX, boardY, blockSize, color, outlineColor) {
+  const ghostY = ghostLandingY(state);
+  const ghost = { ...state.piece, y: ghostY };
+  const cells = pieceCells(ghost);
+  ctx.globalAlpha = 0.33;
+  for (const [x, y] of cells) {
+    if (y >= HIDDEN_ROWS && y < GRID_H_TOTAL) {
+      ctx.fillStyle = color;
+      ctx.fillRect(
+        boardX + x * blockSize,
+        boardY + (y - HIDDEN_ROWS) * blockSize,
+        blockSize - 1,
+        blockSize - 1
+      );
+    }
+  }
+  ctx.globalAlpha = 0.67;
+  ctx.strokeStyle = outlineColor;
+  ctx.lineWidth = 1;
+  for (const [x, y] of cells) {
+    if (y >= HIDDEN_ROWS && y < GRID_H_TOTAL) {
+      ctx.strokeRect(
+        boardX + x * blockSize + 0.5,
+        boardY + (y - HIDDEN_ROWS) * blockSize + 0.5,
+        blockSize - 2,
+        blockSize - 2
+      );
+    }
+  }
+  ctx.globalAlpha = 1;
 }
 
 function getInputDataByName(node, name) {
@@ -516,6 +580,7 @@ function drawNode(node, ctx) {
   const { state } = live;
   const { boardX, boardY, boardW, boardH, sideX, sideY, blockSize } = getLayout(node);
   const palette = getColorPalette(node);
+  const ghostEnabled = isGhostEnabled(node);
 
   const bgSource = getBackgroundSource(node);
   drawBoardBackground(ctx, bgSource, boardX, boardY, boardW, boardH, palette.X);
@@ -523,21 +588,26 @@ function drawNode(node, ctx) {
   ctx.lineWidth = 1;
   ctx.strokeRect(boardX + 0.5, boardY + 0.5, boardW - 1, boardH - 1);
 
-  for (let y = 0; y < GRID_H; y += 1) {
+  for (let y = 0; y < GRID_H_VISIBLE; y += 1) {
+    const boardYIndex = y + HIDDEN_ROWS;
     for (let x = 0; x < GRID_W; x += 1) {
-      const cell = state.board[y][x];
+      const cell = state.board[boardYIndex][x];
       if (cell) {
         drawBlockSized(ctx, boardX + x * blockSize, boardY + y * blockSize, blockSize, palette[cell]);
       }
     }
   }
 
+  if (!state.gameOver && ghostEnabled) {
+    drawGhostPiece(ctx, state, boardX, boardY, blockSize, palette[state.piece.shape], COLORS.Text);
+  }
+
   for (const [x, y] of pieceCells(state.piece)) {
-    if (y >= 0 && y < GRID_H) {
+    if (y >= HIDDEN_ROWS && y < GRID_H_TOTAL) {
       drawBlockSized(
         ctx,
         boardX + x * blockSize,
-        boardY + y * blockSize,
+        boardY + (y - HIDDEN_ROWS) * blockSize,
         blockSize,
         palette[state.piece.shape],
       );
@@ -598,27 +668,28 @@ function drawNode(node, ctx) {
   const bindings = getControlBindings(node);
   const infoLines = [
     "Controls:",
-    `Move Left - ${bindings.moveLeft.toUpperCase()}`,
-    `Move Right - ${bindings.moveRight.toUpperCase()}`,
-    `Rotate CW - ${bindings.rotateCw.toUpperCase()}`,
-    `Rotate CCW - ${bindings.rotateCcw.toUpperCase()}`,
-    `Drop - ${bindings.drop.toUpperCase()}`,
+    `Move Left - ${formatKeyLabel(bindings.moveLeft)}`,
+    `Move Right - ${formatKeyLabel(bindings.moveRight)}`,
+    `Rotate CW - ${formatKeyLabel(bindings.rotateCw)}`,
+    `Rotate CCW - ${formatKeyLabel(bindings.rotateCcw)}`,
+    `Soft Drop - ${formatKeyLabel(bindings.softDrop)}`,
+    `Hard Drop - ${formatKeyLabel(bindings.hardDrop)}`,
     `Reset - ${bindings.reset.toUpperCase()}`,
     `Pause - ${bindings.pause.toUpperCase()}`,
   ];
-  const fontSize = Math.max(10, Math.floor(blockSize * 0.55));
+  const fontSize = Math.max(9, Math.floor(blockSize * 0.52));
   const lineHeight = fontSize + 3;
   const infoBlockHeight = infoLines.length * lineHeight;
-  const infoY = Math.max(
-    previewY + PREVIEW_GRID * blockSize + PADDING * 1.4,
-    boardY + boardH - infoBlockHeight
-  );
+  const minInfoY = previewY + PREVIEW_GRID * blockSize + PADDING * 1.4;
+  const maxInfoY = boardY + boardH - infoBlockHeight;
+  const infoY = maxInfoY < minInfoY ? maxInfoY : Math.max(minInfoY, maxInfoY);
+  const baseInfoY = infoY;
   ctx.fillStyle = COLORS.Text;
   ctx.font = `bold ${fontSize}px sans-serif`;
-  ctx.fillText(infoLines[0], sideX, infoY);
+  ctx.fillText(infoLines[0], sideX, baseInfoY);
   ctx.font = `${fontSize}px sans-serif`;
   for (let i = 1; i < infoLines.length; i += 1) {
-    ctx.fillText(infoLines[i], sideX, infoY + i * lineHeight);
+    ctx.fillText(infoLines[i], sideX, baseInfoY + i * lineHeight);
   }
 
   if (state.gameOver) {
@@ -706,6 +777,15 @@ function ensureTimer(node) {
   live.state.timer = setInterval(() => {
     if (!live.state.running || live.state.gameOver) return;
     live.state.elapsed += 50;
+    if (live.state.locking) {
+      live.state.lockElapsed += 50;
+      if (live.state.lockElapsed >= live.state.lockDelayMs) {
+        settlePiece(live.state);
+        updateBackendState(node);
+        node.setDirtyCanvas(true, true);
+        return;
+      }
+    }
     if (live.state.elapsed >= live.state.dropMs) {
       live.state.elapsed = 0;
       stepDown(live.state);
@@ -773,7 +853,11 @@ function handleKey(event) {
     case bindings.rotateCcw:
       rotate(state, -1);
       break;
-    case bindings.drop:
+    case bindings.softDrop:
+      state.softDrop = true;
+      state.dropMs = Math.max(1, Math.floor(state.baseDropMs / 20));
+      break;
+    case bindings.hardDrop:
       hardDrop(state);
       break;
     case bindings.reset:
@@ -792,6 +876,19 @@ function handleKey(event) {
     updateBackendState(node);
     node.setDirtyCanvas(true, true);
   }
+}
+
+function handleKeyUp(event) {
+  if (event.target && ["INPUT", "TEXTAREA"].includes(event.target.tagName)) return;
+  const node = getSelectedLiveNode(false);
+  if (!node) return;
+  const live = node.__tetrisLive;
+  if (!live || live.state.gameOver) return;
+  const bindings = getControlBindings(node);
+  const key = event.key.toLowerCase();
+  if (key !== bindings.softDrop) return;
+  live.state.softDrop = false;
+  live.state.dropMs = live.state.baseDropMs;
 }
 
 function applyWidgetHiding(node) {
@@ -838,6 +935,31 @@ function ensureOptionsDivider(node) {
   };
   node.widgets.splice(pauseIndex + 1, 0, divider);
   node.__tetrisDividerAdded = true;
+  node.setDirtyCanvas(true, true);
+}
+
+function ensureGhostDivider(node) {
+  if (!node?.widgets) return;
+  if (node.__tetrisGhostDividerAdded) return;
+  const bgIndex = node.widgets.findIndex((w) => w.name === "background_color");
+  if (bgIndex < 0) return;
+  const divider = {
+    type: "tetrinode_divider",
+    name: "divider_ghost",
+    draw(ctx, _, width, y, height) {
+      ctx.strokeStyle = "rgba(235,235,235,0.25)";
+      ctx.beginPath();
+      const lineY = y + 4;
+      ctx.moveTo(10, lineY);
+      ctx.lineTo(width - 10, lineY);
+      ctx.stroke();
+    },
+    computeSize(width) {
+      return [width, 12];
+    },
+  };
+  node.widgets.splice(bgIndex + 1, 0, divider);
+  node.__tetrisGhostDividerAdded = true;
   node.setDirtyCanvas(true, true);
 }
 
@@ -967,38 +1089,51 @@ function getControlBindings(node) {
     moveRight: "d",
     rotateCw: "w",
     rotateCcw: "q",
-    drop: "s",
+    softDrop: "s",
+    hardDrop: " ",
     reset: "r",
     pause: "p",
   };
   if (!node) return defaultBindings;
+  const normalizeKey = (value) => {
+    const raw = `${value}`.trim().toLowerCase();
+    if (!raw) return raw;
+    if (raw === "space" || raw === "spacebar") return " ";
+    return raw;
+  };
   const linked = getLinkedOptionsNode(node);
   const lookup = (name, fallback) => {
     if (linked?.widgets) {
       const widget = linked.widgets.find((w) => w.name === name);
       if (widget && typeof widget.value === "string") {
         const trimmed = widget.value.trim();
-        if (trimmed) return trimmed.toLowerCase();
+        if (trimmed) return normalizeKey(trimmed);
       }
     }
     if (node.widgets) {
       const widget = node.widgets.find((w) => w.name === name);
       if (widget && typeof widget.value === "string") {
         const trimmed = widget.value.trim();
-        if (trimmed) return trimmed.toLowerCase();
+        if (trimmed) return normalizeKey(trimmed);
       }
     }
-    return fallback;
+    return normalizeKey(fallback);
   };
   return {
     moveLeft: lookup("move_left", defaultBindings.moveLeft),
     moveRight: lookup("move_right", defaultBindings.moveRight),
     rotateCw: lookup("rotate_cw", defaultBindings.rotateCw),
     rotateCcw: lookup("rotate_ccw", defaultBindings.rotateCcw),
-    drop: lookup("drop", defaultBindings.drop),
+    softDrop: lookup("soft_drop", defaultBindings.softDrop),
+    hardDrop: lookup("hard_drop", defaultBindings.hardDrop),
     reset: lookup("reset", defaultBindings.reset),
     pause: lookup("pause", defaultBindings.pause),
   };
+}
+
+function formatKeyLabel(value) {
+  if (value === " ") return "SPACE";
+  return value.toUpperCase();
 }
 
 function parseHexColor(value) {
@@ -1089,6 +1224,28 @@ function getColorPalette(node) {
   return palette;
 }
 
+function isGhostEnabled(node) {
+  const linked = getLinkedOptionsNode(node);
+  const lookup = (source) => {
+    if (!source?.widgets) return null;
+    const widget = source.widgets.find((w) => w.name === "ghost_piece");
+    if (widget && typeof widget.value === "boolean") {
+      return widget.value;
+    }
+    if (widget && typeof widget.value === "string") {
+      const trimmed = widget.value.trim().toLowerCase();
+      if (trimmed === "true") return true;
+      if (trimmed === "false") return false;
+    }
+    return null;
+  };
+  const linkedValue = lookup(linked);
+  if (linkedValue != null) return linkedValue;
+  const localValue = lookup(node);
+  if (localValue != null) return localValue;
+  return true;
+}
+
 function getLinkedOptionsNode(node) {
   if (!node?.inputs) return null;
   const input = node.inputs.find((inp) => inp?.name === "tetrinode_options");
@@ -1159,6 +1316,7 @@ app.registerExtension({
   async nodeCreated(node) {
     if (node?.comfyClass === "TetriNodeOptions") {
       ensureOptionsDivider(node);
+      ensureGhostDivider(node);
       return;
     }
     if (node?.comfyClass !== NODE_CLASS) return;
@@ -1168,7 +1326,7 @@ app.registerExtension({
     node.__tetrisLive = { state: createState(seed ?? 0) };
 
     const boardW = GRID_W * BLOCK;
-    const boardH = GRID_H * BLOCK;
+    const boardH = GRID_H_VISIBLE * BLOCK;
     const sideW = PREVIEW_GRID * BLOCK + PADDING * 2;
     const widgetArea = 60;
     node.size = [
@@ -1206,5 +1364,6 @@ app.registerExtension({
   },
   async setup() {
     window.addEventListener("keydown", handleKey, true);
+    window.addEventListener("keyup", handleKeyUp, true);
   },
 });

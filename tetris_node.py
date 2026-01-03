@@ -7,7 +7,10 @@ from PIL import Image, ImageDraw
 
 
 BOARD_WIDTH = 10
-BOARD_HEIGHT = 20
+BOARD_HEIGHT = 40
+VISIBLE_HEIGHT = 20
+HIDDEN_ROWS = BOARD_HEIGHT - VISIBLE_HEIGHT
+SPAWN_Y = HIDDEN_ROWS - 2
 STATE_VERSION = 1
 PREVIEW_GRID = 4
 
@@ -87,7 +90,7 @@ def _pop_shape(state):
 
 
 def _spawn_piece(shape):
-    return {"shape": shape, "rot": 0, "x": 3, "y": 0}
+    return {"shape": shape, "rot": 0, "x": 3, "y": SPAWN_Y}
 
 
 def _piece_cells(piece):
@@ -189,7 +192,7 @@ def _resolve_colors(options_payload):
 
 def _render(board, piece, block_size, background_image=None, colors=None):
     width = BOARD_WIDTH * block_size
-    height = BOARD_HEIGHT * block_size
+    height = VISIBLE_HEIGHT * block_size
     palette = colors or COLORS
     bg = _prepare_background(background_image, width, height)
     if bg is not None:
@@ -198,9 +201,10 @@ def _render(board, piece, block_size, background_image=None, colors=None):
         img = Image.new("RGB", (width, height), palette["X"])
     draw = ImageDraw.Draw(img)
 
-    for y in range(BOARD_HEIGHT):
+    for y in range(VISIBLE_HEIGHT):
+        board_y = y + HIDDEN_ROWS
         for x in range(BOARD_WIDTH):
-            cell = board[y][x]
+            cell = board[board_y][x]
             if cell:
                 color = palette[cell]
                 x0 = x * block_size
@@ -208,10 +212,10 @@ def _render(board, piece, block_size, background_image=None, colors=None):
                 draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=color)
 
     for x, y in _piece_cells(piece):
-        if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
+        if HIDDEN_ROWS <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
             color = palette[piece["shape"]]
             x0 = x * block_size
-            y0 = y * block_size
+            y0 = (y - HIDDEN_ROWS) * block_size
             draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=color)
 
     arr = np.array(img).astype(np.float32) / 255.0
@@ -345,7 +349,8 @@ class TetriNode:
                         "down",
                         "rotate_cw",
                         "rotate_ccw",
-                        "drop",
+                        "soft_drop",
+                        "hard_drop",
                         "new",
                     ],
                     {"default": "none"},
@@ -418,7 +423,7 @@ class TetriNode:
             moved = _move(piece, 1, 0)
             if not _collides(board, moved):
                 piece = moved
-        elif action == "down":
+        elif action in {"down", "soft_drop"}:
             moved = _move(piece, 0, 1)
             if not _collides(board, moved):
                 piece = moved
@@ -430,13 +435,13 @@ class TetriNode:
             rotated = _rotate(piece, -1)
             if not _collides(board, rotated):
                 piece = rotated
-        elif action == "drop":
+        elif action == "hard_drop":
             moved = _move(piece, 0, 1)
             while not _collides(board, moved):
                 piece = moved
                 moved = _move(piece, 0, 1)
 
-        if action not in {"drop", "down"}:
+        if action not in {"hard_drop", "down", "soft_drop"}:
             moved = _move(piece, 0, 1)
             if not _collides(board, moved):
                 piece = moved
@@ -449,7 +454,7 @@ class TetriNode:
                 next_shape = _pop_shape(state_obj)
                 if _collides(board, piece):
                     state_obj["game_over"] = True
-        elif action in {"drop", "down"}:
+        elif action in {"hard_drop", "down", "soft_drop"}:
             moved = _move(piece, 0, 1)
             if _collides(board, moved):
                 _lock_piece(board, piece)
@@ -479,7 +484,8 @@ class TetriNodeOptions:
                 "move_right": ("STRING", {"default": "D"}),
                 "rotate_cw": ("STRING", {"default": "W"}),
                 "rotate_ccw": ("STRING", {"default": "Q"}),
-                "drop": ("STRING", {"default": "S"}),
+                "soft_drop": ("STRING", {"default": "S"}),
+                "hard_drop": ("STRING", {"default": "Space"}),
                 "reset": ("STRING", {"default": "R"}),
                 "pause": ("STRING", {"default": "P"}),
                 "color_i": ("STRING", {"default": "#55D6FF"}),
@@ -490,6 +496,7 @@ class TetriNodeOptions:
                 "color_t": ("STRING", {"default": "#BB80FF"}),
                 "color_z": ("STRING", {"default": "#FF7676"}),
                 "background_color": ("STRING", {"default": "#32343E"}),
+                "ghost_piece": ("BOOLEAN", {"default": True}),
             }
         }
 
@@ -504,7 +511,8 @@ class TetriNodeOptions:
         move_right,
         rotate_cw,
         rotate_ccw,
-        drop,
+        soft_drop,
+        hard_drop,
         reset,
         pause,
         color_i,
@@ -515,13 +523,15 @@ class TetriNodeOptions:
         color_t,
         color_z,
         background_color,
+        ghost_piece,
     ):
         payload = {
             "move_left": move_left,
             "move_right": move_right,
             "rotate_cw": rotate_cw,
             "rotate_ccw": rotate_ccw,
-            "drop": drop,
+            "soft_drop": soft_drop,
+            "hard_drop": hard_drop,
             "reset": reset,
             "pause": pause,
             "color_i": color_i,
@@ -532,5 +542,6 @@ class TetriNodeOptions:
             "color_t": color_t,
             "color_z": color_z,
             "background_color": background_color,
+            "ghost_piece": ghost_piece,
         }
         return (json.dumps(payload),)
