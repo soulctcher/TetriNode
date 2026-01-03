@@ -1,7 +1,7 @@
 [project]
 name = "TetriNode"
 description = "A ComfyUI custom node pack that embeds a playable Tetris game inside a node UI, with image outputs for the live board and next-piece preview."
-version = "1.0.0"
+version = "1.0.1"
 license = {file = "LICENSE"} 
 # classifiers = [
 #     # For OS-independent nodes (works on all operating systems)
@@ -24,7 +24,7 @@ license = {file = "LICENSE"}
 [project.urls]
 Repository = "https://github.com/soulctcher/TetriNode"
 #  Used by Comfy Registry https://registry.comfy.org
-Documentation = "https://github.com/soulctcher/TetriNode/wiki"
+Documentation = "https://github.com/soulctcher/TetriNode"
 "Bug Tracker" = "https://github.com/soulctcher/TetriNode/issues"
 
 [tool.comfy]
