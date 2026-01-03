@@ -26,6 +26,7 @@ Main gameplay node.
 **Inputs**
 - `tetrinode_options` (TETRINODE_OPTIONS): Custom keybindings for moving left/right, rotating the piece, dropping the piece, play/pause, and reset
 - `seed` (INT): Seed used for piece sequence
+- `background_image` (IMAGE, optional): Background image for the game board (scaled to cover, then center-cropped)
 
 **Outputs**
 - `image` (IMAGE): current board
@@ -40,6 +41,12 @@ Optional node that provides keybindings.
 
 ![TetriNode Options node UI](docs/images/options.png)
 
+**Inputs**
+
+- `move_left`, `move_right`, `rotate_cw`, `rotate_ccw`, `drop`, `reset`, `pause`: Key bindings
+- `color_i`, `color_j`, `color_l`, `color_o`, `color_s`, `color_t`, `color_z`: Hex colors for each tetromino (e.g. `#55D6FF`)
+- `background_color`: Hex color for the board background (ignored when a background image is connected)
+
 **Outputs**
 
 - `tetrinode_options` (TETRINODE_OPTIONS): Custom keybindings for moving left/right, rotating the piece, dropping the piece, play/pause, and reset
@@ -50,7 +57,8 @@ Displayed inside the node UI and reflected in the game input handler.
 
 - Move Left: `A`
 - Move Right: `D`
-- Rotate: `W`
+- Rotate CW: `W`
+- Rotate CCW: `Q`
 - Drop: `S`
 - Reset: `R`
 - Pause: `P`

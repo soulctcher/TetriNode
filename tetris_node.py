@@ -118,24 +118,98 @@ def _clear_lines(board):
     return remaining, cleared
 
 
-def _render(board, piece, block_size):
+def _prepare_background(background_image, width, height):
+    if background_image is None:
+        return None
+    try:
+        img = background_image[0].detach().cpu().numpy()
+    except Exception:
+        return None
+    if img.ndim != 3 or img.shape[-1] < 3:
+        return None
+    img = np.clip(img[..., :3] * 255.0, 0, 255).astype(np.uint8)
+    pil = Image.fromarray(img, "RGB")
+    src_w, src_h = pil.size
+    if src_w <= 0 or src_h <= 0:
+        return None
+    scale = max(width / src_w, height / src_h)
+    new_w = max(1, int(round(src_w * scale)))
+    new_h = max(1, int(round(src_h * scale)))
+    pil = pil.resize((new_w, new_h), Image.BICUBIC)
+    left = max(0, (new_w - width) // 2)
+    top = max(0, (new_h - height) // 2)
+    return pil.crop((left, top, left + width, top + height))
+
+
+def _parse_hex_color(value):
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if candidate.startswith("#"):
+        candidate = candidate[1:]
+    if len(candidate) != 6:
+        return None
+    try:
+        r = int(candidate[0:2], 16)
+        g = int(candidate[2:4], 16)
+        b = int(candidate[4:6], 16)
+    except ValueError:
+        return None
+    return (r, g, b)
+
+
+def _resolve_colors(options_payload):
+    colors = dict(COLORS)
+    if not options_payload:
+        return colors
+    payload = options_payload
+    if isinstance(options_payload, str):
+        try:
+            payload = json.loads(options_payload)
+        except json.JSONDecodeError:
+            return colors
+    if not isinstance(payload, dict):
+        return colors
+    mapping = {
+        "color_i": "I",
+        "color_j": "J",
+        "color_l": "L",
+        "color_o": "O",
+        "color_s": "S",
+        "color_t": "T",
+        "color_z": "Z",
+        "background_color": "X",
+    }
+    for key, shape in mapping.items():
+        parsed = _parse_hex_color(payload.get(key))
+        if parsed:
+            colors[shape] = parsed
+    return colors
+
+
+def _render(board, piece, block_size, background_image=None, colors=None):
     width = BOARD_WIDTH * block_size
     height = BOARD_HEIGHT * block_size
-    img = Image.new("RGB", (width, height), COLORS["X"])
+    palette = colors or COLORS
+    bg = _prepare_background(background_image, width, height)
+    if bg is not None:
+        img = bg
+    else:
+        img = Image.new("RGB", (width, height), palette["X"])
     draw = ImageDraw.Draw(img)
 
     for y in range(BOARD_HEIGHT):
         for x in range(BOARD_WIDTH):
             cell = board[y][x]
             if cell:
-                color = COLORS[cell]
+                color = palette[cell]
                 x0 = x * block_size
                 y0 = y * block_size
                 draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=color)
 
     for x, y in _piece_cells(piece):
         if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
-            color = COLORS[piece["shape"]]
+            color = palette[piece["shape"]]
             x0 = x * block_size
             y0 = y * block_size
             draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=color)
@@ -144,10 +218,11 @@ def _render(board, piece, block_size):
     return torch.from_numpy(arr)[None, ...]
 
 
-def _render_next_piece(shape, block_size):
+def _render_next_piece(shape, block_size, colors=None):
+    palette = colors or COLORS
     grid = PREVIEW_GRID
     size = grid * block_size
-    img = Image.new("RGB", (size, size), COLORS["X"])
+    img = Image.new("RGB", (size, size), palette["X"])
     draw = ImageDraw.Draw(img)
 
     cells = SHAPES[shape][0]
@@ -166,7 +241,7 @@ def _render_next_piece(shape, block_size):
         if 0 <= gx < grid and 0 <= gy < grid:
             x0 = gx * block_size
             y0 = gy * block_size
-            draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=COLORS[shape])
+            draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=palette[shape])
 
     arr = np.array(img).astype(np.float32) / 255.0
     return torch.from_numpy(arr)[None, ...]
@@ -290,6 +365,7 @@ class TetriNode:
             },
             "optional": {
                 "tetrinode_options": ("TETRINODE_OPTIONS",),
+                "background_image": ("IMAGE",),
             },
         }
 
@@ -298,7 +374,8 @@ class TetriNode:
     FUNCTION = "step"
     CATEGORY = "games"
 
-    def step(self, action, state, seed, block_size, tetrinode_options=""):
+    def step(self, action, state, seed, block_size, tetrinode_options="", background_image=None):
+        palette = _resolve_colors(tetrinode_options)
         if action == "new":
             state_obj = _default_state(seed)
         else:
@@ -307,14 +384,26 @@ class TetriNode:
 
         if action == "sync":
             state_obj["seed"] = seed
-            image = _render(state_obj["board"], state_obj["piece"], block_size)
-            preview = _render_next_piece(state_obj["next_piece_shape"], block_size)
-            return (image, json.dumps(state_obj), 0, state_obj["score"], preview)
+            image = _render(state_obj["board"], state_obj["piece"], block_size, background_image, palette)
+            preview = _render_next_piece(state_obj["next_piece_shape"], block_size, palette)
+            return (
+                image,
+                json.dumps(state_obj),
+                state_obj["lines_cleared_total"],
+                state_obj["score"],
+                preview,
+            )
 
         if state_obj.get("game_over"):
-            image = _render(state_obj["board"], state_obj["piece"], block_size)
-            preview = _render_next_piece(state_obj["next_piece_shape"], block_size)
-            return (image, json.dumps(state_obj), 0, state_obj["score"], preview)
+            image = _render(state_obj["board"], state_obj["piece"], block_size, background_image, palette)
+            preview = _render_next_piece(state_obj["next_piece_shape"], block_size, palette)
+            return (
+                image,
+                json.dumps(state_obj),
+                state_obj["lines_cleared_total"],
+                state_obj["score"],
+                preview,
+            )
 
         board = state_obj["board"]
         piece = state_obj["piece"]
@@ -355,7 +444,6 @@ class TetriNode:
                 _lock_piece(board, piece)
                 board, cleared = _clear_lines(board)
                 lines_cleared = cleared
-                state_obj["score"] += cleared
                 state_obj["lines_cleared_total"] += cleared
                 piece = _spawn_piece(next_shape)
                 next_shape = _pop_shape(state_obj)
@@ -367,7 +455,6 @@ class TetriNode:
                 _lock_piece(board, piece)
                 board, cleared = _clear_lines(board)
                 lines_cleared = cleared
-                state_obj["score"] += cleared
                 state_obj["lines_cleared_total"] += cleared
                 piece = _spawn_piece(next_shape)
                 next_shape = _pop_shape(state_obj)
@@ -378,9 +465,9 @@ class TetriNode:
         state_obj["piece"] = piece
         state_obj["next_piece_shape"] = next_shape
 
-        image = _render(board, piece, block_size)
-        preview = _render_next_piece(next_shape, block_size)
-        return (image, json.dumps(state_obj), lines_cleared, state_obj["score"], preview)
+        image = _render(board, piece, block_size, background_image, palette)
+        preview = _render_next_piece(next_shape, block_size, palette)
+        return (image, json.dumps(state_obj), state_obj["lines_cleared_total"], state_obj["score"], preview)
 
 
 class TetriNodeOptions:
@@ -390,10 +477,19 @@ class TetriNodeOptions:
             "required": {
                 "move_left": ("STRING", {"default": "A"}),
                 "move_right": ("STRING", {"default": "D"}),
-                "rotate": ("STRING", {"default": "W"}),
+                "rotate_cw": ("STRING", {"default": "W"}),
+                "rotate_ccw": ("STRING", {"default": "Q"}),
                 "drop": ("STRING", {"default": "S"}),
                 "reset": ("STRING", {"default": "R"}),
                 "pause": ("STRING", {"default": "P"}),
+                "color_i": ("STRING", {"default": "#55D6FF"}),
+                "color_j": ("STRING", {"default": "#5669FF"}),
+                "color_l": ("STRING", {"default": "#FFA74F"}),
+                "color_o": ("STRING", {"default": "#FFE757"}),
+                "color_s": ("STRING", {"default": "#7AEB84"}),
+                "color_t": ("STRING", {"default": "#BB80FF"}),
+                "color_z": ("STRING", {"default": "#FF7676"}),
+                "background_color": ("STRING", {"default": "#32343E"}),
             }
         }
 
@@ -402,13 +498,39 @@ class TetriNodeOptions:
     FUNCTION = "build"
     CATEGORY = "games"
 
-    def build(self, move_left, move_right, rotate, drop, reset, pause):
+    def build(
+        self,
+        move_left,
+        move_right,
+        rotate_cw,
+        rotate_ccw,
+        drop,
+        reset,
+        pause,
+        color_i,
+        color_j,
+        color_l,
+        color_o,
+        color_s,
+        color_t,
+        color_z,
+        background_color,
+    ):
         payload = {
             "move_left": move_left,
             "move_right": move_right,
-            "rotate": rotate,
+            "rotate_cw": rotate_cw,
+            "rotate_ccw": rotate_ccw,
             "drop": drop,
             "reset": reset,
             "pause": pause,
+            "color_i": color_i,
+            "color_j": color_j,
+            "color_l": color_l,
+            "color_o": color_o,
+            "color_s": color_s,
+            "color_t": color_t,
+            "color_z": color_z,
+            "background_color": background_color,
         }
         return (json.dumps(payload),)

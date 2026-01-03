@@ -187,7 +187,6 @@ function stepDown(state) {
   state.board = result.board;
   if (result.cleared > 0) {
     state.lines += result.cleared;
-    state.score += result.cleared;
   }
   spawnNext(state);
 }
@@ -340,6 +339,173 @@ function drawBlockSized(ctx, x, y, size, color) {
   ctx.fillRect(x, y, size - 1, size - 1);
 }
 
+function getInputDataByName(node, name) {
+  const idx = node?.inputs?.findIndex((inp) => inp?.name === name);
+  if (idx == null || idx < 0) return null;
+  if (typeof node.getInputData !== "function") return null;
+  return node.getInputData(idx);
+}
+
+function coerceImageSource(value) {
+  if (!value) return null;
+  if (
+    value instanceof HTMLImageElement ||
+    value instanceof HTMLCanvasElement ||
+    value instanceof ImageBitmap ||
+    value instanceof OffscreenCanvas ||
+    value instanceof HTMLVideoElement
+  ) {
+    return value;
+  }
+  if (value.image) {
+    const img = value.image;
+    if (
+      img instanceof HTMLImageElement ||
+      img instanceof HTMLCanvasElement ||
+      img instanceof ImageBitmap ||
+      img instanceof OffscreenCanvas
+    ) {
+      return img;
+    }
+  }
+  return null;
+}
+
+function toByteArray(data) {
+  if (!data) return null;
+  if (data instanceof Uint8ClampedArray) return data;
+  let array = data;
+  if (data instanceof Uint8Array) {
+    return new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength);
+  }
+  if (data instanceof Float32Array || data instanceof Float64Array) {
+    array = Array.from(data);
+  }
+  if (Array.isArray(array)) {
+    let max = 0;
+    for (let i = 0; i < array.length; i += 1) {
+      const v = array[i];
+      if (Number.isFinite(v) && v > max) max = v;
+    }
+    const scale = max <= 1 ? 255 : 1;
+    const out = new Uint8ClampedArray(array.length);
+    for (let i = 0; i < array.length; i += 1) {
+      const v = array[i];
+      const value = Number.isFinite(v) ? v * scale : 0;
+      out[i] = Math.max(0, Math.min(255, Math.round(value)));
+    }
+    return out;
+  }
+  return null;
+}
+
+function buildCanvasFromData(value) {
+  if (!value || !value.data || !value.width || !value.height) return null;
+  const width = Math.max(1, Math.floor(value.width));
+  const height = Math.max(1, Math.floor(value.height));
+  const bytes = toByteArray(value.data);
+  if (!bytes) return null;
+  const expected3 = width * height * 3;
+  const expected4 = width * height * 4;
+  let pixels = bytes;
+  if (bytes.length === expected3) {
+    pixels = new Uint8ClampedArray(expected4);
+    for (let i = 0; i < width * height; i += 1) {
+      const src = i * 3;
+      const dst = i * 4;
+      pixels[dst] = bytes[src];
+      pixels[dst + 1] = bytes[src + 1];
+      pixels[dst + 2] = bytes[src + 2];
+      pixels[dst + 3] = 255;
+    }
+  } else if (bytes.length !== expected4) {
+    return null;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  const imgData = new ImageData(pixels, width, height);
+  ctx.putImageData(imgData, 0, 0);
+  return canvas;
+}
+
+function getLinkedImageSource(node, name) {
+  const resolved = getInputLink(node, name);
+  if (!resolved) return null;
+  const { origin, link } = resolved;
+  const slot = link?.origin_slot ?? 0;
+  if (!origin) return null;
+  if (Array.isArray(origin.imgs)) {
+    const candidate = origin.imgs[slot] || origin.imgs[0];
+    const source = coerceImageSource(candidate);
+    if (source) return source;
+  }
+  if (Array.isArray(origin.images)) {
+    const candidate = origin.images[slot] || origin.images[0];
+    const source = coerceImageSource(candidate);
+    if (source) return source;
+  }
+  const direct = coerceImageSource(origin.image || origin.img || origin._img || origin._image);
+  if (direct) return direct;
+  return null;
+}
+
+function getBackgroundSource(node) {
+  const raw = getInputDataByName(node, "background_image");
+  let value = Array.isArray(raw) ? raw[0] : raw;
+  let source = null;
+  if (!value) {
+    source = getLinkedImageSource(node, "background_image");
+    value = source;
+  }
+  if (!value && !source) return null;
+  if (!node.__tetrisBg) node.__tetrisBg = {};
+  if (node.__tetrisBg.value === value && node.__tetrisBg.source) {
+    return node.__tetrisBg.source;
+  }
+  if (!source) {
+    source = coerceImageSource(value);
+  }
+  if (!source) {
+    source = buildCanvasFromData(value);
+  }
+  node.__tetrisBg = { value, source };
+  return source || null;
+}
+
+function drawBoardBackground(ctx, source, boardX, boardY, boardW, boardH, fallbackColor) {
+  if (!source) {
+    ctx.fillStyle = fallbackColor || COLORS.X;
+    ctx.fillRect(boardX, boardY, boardW, boardH);
+    return;
+  }
+  const srcW =
+    source.videoWidth ||
+    source.naturalWidth ||
+    source.width ||
+    source.displayWidth ||
+    0;
+  const srcH =
+    source.videoHeight ||
+    source.naturalHeight ||
+    source.height ||
+    source.displayHeight ||
+    0;
+  if (!srcW || !srcH) {
+    ctx.fillStyle = fallbackColor || COLORS.X;
+    ctx.fillRect(boardX, boardY, boardW, boardH);
+    return;
+  }
+  const scale = Math.max(boardW / srcW, boardH / srcH);
+  const cropW = boardW / scale;
+  const cropH = boardH / scale;
+  const sx = Math.max(0, (srcW - cropW) / 2);
+  const sy = Math.max(0, (srcH - cropH) / 2);
+  ctx.drawImage(source, sx, sy, cropW, cropH, boardX, boardY, boardW, boardH);
+}
+
 function drawNode(node, ctx) {
   const live = node.__tetrisLive;
   if (!live) return;
@@ -349,15 +515,19 @@ function drawNode(node, ctx) {
   syncSeed(live.state, node);
   const { state } = live;
   const { boardX, boardY, boardW, boardH, sideX, sideY, blockSize } = getLayout(node);
+  const palette = getColorPalette(node);
 
-  ctx.fillStyle = COLORS.X;
-  ctx.fillRect(boardX, boardY, boardW, boardH);
+  const bgSource = getBackgroundSource(node);
+  drawBoardBackground(ctx, bgSource, boardX, boardY, boardW, boardH, palette.X);
+  ctx.strokeStyle = "rgba(150,150,150,0.8)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(boardX + 0.5, boardY + 0.5, boardW - 1, boardH - 1);
 
   for (let y = 0; y < GRID_H; y += 1) {
     for (let x = 0; x < GRID_W; x += 1) {
       const cell = state.board[y][x];
       if (cell) {
-        drawBlockSized(ctx, boardX + x * blockSize, boardY + y * blockSize, blockSize, COLORS[cell]);
+        drawBlockSized(ctx, boardX + x * blockSize, boardY + y * blockSize, blockSize, palette[cell]);
       }
     }
   }
@@ -369,16 +539,27 @@ function drawNode(node, ctx) {
         boardX + x * blockSize,
         boardY + y * blockSize,
         blockSize,
-        COLORS[state.piece.shape],
+        palette[state.piece.shape],
       );
     }
   }
 
   const scoreFontSize = Math.max(10, Math.floor(blockSize * 0.55));
   ctx.fillStyle = COLORS.Text;
+  const lineGap = Math.floor(scoreFontSize * 0.6);
+  const linesLabelY = sideY + scoreFontSize + 1;
+  const linesValueY = linesLabelY + scoreFontSize + 2;
+  const scoreLabelY = linesValueY + lineGap + scoreFontSize;
+  const scoreValueY = scoreLabelY + scoreFontSize + 2;
+  ctx.font = `bold ${scoreFontSize}px sans-serif`;
+  ctx.fillText("Lines Cleared:", sideX, linesLabelY);
+  ctx.fillText("Score:", sideX, scoreLabelY);
   ctx.font = `${scoreFontSize}px sans-serif`;
-  ctx.fillText(`Score: ${state.score}`, sideX, sideY + scoreFontSize + 1);
-  ctx.fillText("Next:", sideX, sideY + scoreFontSize * 2 + 5);
+  ctx.fillText(`${state.lines}`, sideX, linesValueY);
+  ctx.fillText(`${state.score}`, sideX, scoreValueY);
+  const nextLabelY = scoreValueY + scoreFontSize + lineGap * 2;
+  ctx.font = `bold ${scoreFontSize}px sans-serif`;
+  ctx.fillText("Next Piece:", sideX, nextLabelY);
 
   const preview = SHAPES[state.nextShape][0];
   let minX = 99;
@@ -402,29 +583,41 @@ function drawNode(node, ctx) {
       drawBlockSized(
         ctx,
         sideX + gx * blockSize,
-        sideY + scoreFontSize * 2 + 13 + gy * blockSize,
+        nextLabelY + 10 + gy * blockSize,
         blockSize,
-        COLORS[state.nextShape],
+        palette[state.nextShape],
       );
     }
   }
 
-  const infoY = sideY + scoreFontSize * 2 + 13 + PREVIEW_GRID * blockSize + PADDING;
+  const previewY = nextLabelY + 10;
+  ctx.strokeStyle = "rgba(150,150,150,0.8)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(sideX + 0.5, previewY + 0.5, PREVIEW_GRID * blockSize - 1, PREVIEW_GRID * blockSize - 1);
+
   const bindings = getControlBindings(node);
   const infoLines = [
     "Controls:",
-    `Move Left: ${bindings.moveLeft}`,
-    `Move Right: ${bindings.moveRight}`,
-    `Rotate: ${bindings.rotate}`,
-    `Drop: ${bindings.drop}`,
-    `Reset: ${bindings.reset}`,
-    `Pause: ${bindings.pause}`,
+    `Move Left - ${bindings.moveLeft.toUpperCase()}`,
+    `Move Right - ${bindings.moveRight.toUpperCase()}`,
+    `Rotate CW - ${bindings.rotateCw.toUpperCase()}`,
+    `Rotate CCW - ${bindings.rotateCcw.toUpperCase()}`,
+    `Drop - ${bindings.drop.toUpperCase()}`,
+    `Reset - ${bindings.reset.toUpperCase()}`,
+    `Pause - ${bindings.pause.toUpperCase()}`,
   ];
   const fontSize = Math.max(10, Math.floor(blockSize * 0.55));
   const lineHeight = fontSize + 3;
+  const infoBlockHeight = infoLines.length * lineHeight;
+  const infoY = Math.max(
+    previewY + PREVIEW_GRID * blockSize + PADDING * 1.4,
+    boardY + boardH - infoBlockHeight
+  );
   ctx.fillStyle = COLORS.Text;
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  ctx.fillText(infoLines[0], sideX, infoY);
   ctx.font = `${fontSize}px sans-serif`;
-  for (let i = 0; i < infoLines.length; i += 1) {
+  for (let i = 1; i < infoLines.length; i += 1) {
     ctx.fillText(infoLines[i], sideX, infoY + i * lineHeight);
   }
 
@@ -448,6 +641,18 @@ function drawNode(node, ctx) {
     ctx.font = `${subFont}px sans-serif`;
     ctx.fillText(sublabel, boardX + 28, boardY + boardH / 2 + subFont);
   }
+}
+
+function ensureBackgroundUpdater(node) {
+  const live = node.__tetrisLive;
+  if (!live || live.bgTimer) return;
+  live.bgTimer = setInterval(() => {
+    const bg = getBackgroundSource(node);
+    if (bg && live.bgSource !== bg) {
+      live.bgSource = bg;
+      node.setDirtyCanvas(true, true);
+    }
+  }, 250);
 }
 
 function syncSeed(state, node) {
@@ -516,6 +721,10 @@ function stopTimer(node) {
     clearInterval(live.state.timer);
     live.state.timer = null;
   }
+  if (live?.bgTimer) {
+    clearInterval(live.bgTimer);
+    live.bgTimer = null;
+  }
 }
 
 function getSelectedLiveNode(allowFallback = false) {
@@ -558,8 +767,11 @@ function handleKey(event) {
     case bindings.moveRight:
       move(state, 1, 0);
       break;
-    case bindings.rotate:
+    case bindings.rotateCw:
       rotate(state, 1);
+      break;
+    case bindings.rotateCcw:
+      rotate(state, -1);
       break;
     case bindings.drop:
       hardDrop(state);
@@ -602,6 +814,31 @@ function applyWidgetHiding(node) {
     node.__tetrisWidgetsHidden = true;
     node.setDirtyCanvas(true, true);
   }
+}
+
+function ensureOptionsDivider(node) {
+  if (!node?.widgets) return;
+  if (node.__tetrisDividerAdded) return;
+  const pauseIndex = node.widgets.findIndex((w) => w.name === "pause");
+  if (pauseIndex < 0) return;
+  const divider = {
+    type: "tetrinode_divider",
+    name: "divider",
+    draw(ctx, _, width, y, height) {
+      ctx.strokeStyle = "rgba(235,235,235,0.25)";
+      ctx.beginPath();
+      const lineY = y + 4;
+      ctx.moveTo(10, lineY);
+      ctx.lineTo(width - 10, lineY);
+      ctx.stroke();
+    },
+    computeSize(width) {
+      return [width, 12];
+    },
+  };
+  node.widgets.splice(pauseIndex + 1, 0, divider);
+  node.__tetrisDividerAdded = true;
+  node.setDirtyCanvas(true, true);
 }
 
 function isValidLinkId(link) {
@@ -728,7 +965,8 @@ function getControlBindings(node) {
   const defaultBindings = {
     moveLeft: "a",
     moveRight: "d",
-    rotate: "w",
+    rotateCw: "w",
+    rotateCcw: "q",
     drop: "s",
     reset: "r",
     pause: "p",
@@ -755,11 +993,100 @@ function getControlBindings(node) {
   return {
     moveLeft: lookup("move_left", defaultBindings.moveLeft),
     moveRight: lookup("move_right", defaultBindings.moveRight),
-    rotate: lookup("rotate", defaultBindings.rotate),
+    rotateCw: lookup("rotate_cw", defaultBindings.rotateCw),
+    rotateCcw: lookup("rotate_ccw", defaultBindings.rotateCcw),
     drop: lookup("drop", defaultBindings.drop),
     reset: lookup("reset", defaultBindings.reset),
     pause: lookup("pause", defaultBindings.pause),
   };
+}
+
+function parseHexColor(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const hex = trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  return `rgb(${r},${g},${b})`;
+}
+
+function coerceStringValue(value) {
+  if (value == null) return null;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "object" && "value" in value) {
+    const inner = value.value;
+    if (typeof inner === "string") return inner;
+    if (typeof inner === "number" && Number.isFinite(inner)) return String(inner);
+  }
+  return null;
+}
+
+function getLinkedStringValue(node, name) {
+  const resolved = getInputLink(node, name);
+  if (!resolved) return null;
+  const { link, origin } = resolved;
+  const output = origin.outputs?.[link.origin_slot];
+  if (output && output.value !== undefined) {
+    return coerceStringValue(output.value);
+  }
+  const outputName = output?.name;
+  if (outputName && origin.widgets) {
+    const widgetIndex = origin.widgets.findIndex((w) => w.name === outputName);
+    if (widgetIndex >= 0) {
+      const widgetValue = origin.widgets[widgetIndex]?.value;
+      const coerced = coerceStringValue(widgetValue);
+      if (coerced) return coerced;
+      if (origin.widgets_values && origin.widgets_values.length > widgetIndex) {
+        const stored = coerceStringValue(origin.widgets_values[widgetIndex]);
+        if (stored) return stored;
+      }
+    }
+  }
+  if (origin.widgets_values && origin.widgets_values.length) {
+    const coerced = coerceStringValue(origin.widgets_values[0]);
+    if (coerced) return coerced;
+  }
+  if (origin.widgets && origin.widgets.length) {
+    const coerced = coerceStringValue(origin.widgets[0]?.value);
+    if (coerced) return coerced;
+  }
+  return null;
+}
+
+function getColorPalette(node) {
+  const palette = { ...COLORS };
+  const linked = getLinkedOptionsNode(node);
+  if (!linked?.widgets) return palette;
+  const lookup = (name) => {
+    const linkedValue = getLinkedStringValue(linked, name);
+    const coercedInput = coerceStringValue(linkedValue);
+    if (coercedInput) {
+      const parsed = parseHexColor(coercedInput);
+      if (parsed) return parsed;
+    }
+    const widget = linked.widgets.find((w) => w.name === name);
+    const widgetValue = coerceStringValue(widget?.value);
+    return parseHexColor(widgetValue);
+  };
+  const mapping = {
+    color_i: "I",
+    color_j: "J",
+    color_l: "L",
+    color_o: "O",
+    color_s: "S",
+    color_t: "T",
+    color_z: "Z",
+    background_color: "X",
+  };
+  for (const [key, shape] of Object.entries(mapping)) {
+    const parsed = lookup(key);
+    if (parsed) palette[shape] = parsed;
+  }
+  return palette;
 }
 
 function getLinkedOptionsNode(node) {
@@ -830,6 +1157,10 @@ function applySeedAfterGenerate(node) {
 app.registerExtension({
   name: EXT_NAME,
   async nodeCreated(node) {
+    if (node?.comfyClass === "TetriNodeOptions") {
+      ensureOptionsDivider(node);
+      return;
+    }
     if (node?.comfyClass !== NODE_CLASS) return;
     applyWidgetHiding(node);
     ensureSeedControlWidget(node);
@@ -871,6 +1202,7 @@ app.registerExtension({
     node.__tetrisLive.state.running = false;
     updateBackendState(node);
     ensureTimer(node);
+    ensureBackgroundUpdater(node);
   },
   async setup() {
     window.addEventListener("keydown", handleKey, true);
