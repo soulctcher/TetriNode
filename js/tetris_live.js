@@ -166,6 +166,7 @@ function createState(seed, startLevel = 1, levelProgression = "fixed") {
     startLevel: start,
     level,
     levelProgression: progression,
+    b2bActive: false,
     running: false,
     started: false,
     gameOver: false,
@@ -227,6 +228,56 @@ function updateLevel(state) {
     : state.baseDropMs;
 }
 
+function scoreForClear(level, lines, tspinType, b2bActive) {
+  let base = 0;
+  let qualifies = false;
+  if (tspinType === "tspin") {
+    if (lines === 0) {
+      base = 400 * level;
+    } else if (lines === 1) {
+      base = 800 * level;
+      qualifies = true;
+    } else if (lines === 2) {
+      base = 1200 * level;
+      qualifies = true;
+    } else if (lines === 3) {
+      base = 1600 * level;
+      qualifies = true;
+    }
+  } else if (tspinType === "mini") {
+    if (lines === 0) {
+      base = 100 * level;
+    } else {
+      base = 200 * level;
+      qualifies = true;
+    }
+  } else {
+    if (lines === 1) {
+      base = 100 * level;
+    } else if (lines === 2) {
+      base = 300 * level;
+    } else if (lines === 3) {
+      base = 500 * level;
+    } else if (lines === 4) {
+      base = 800 * level;
+      qualifies = true;
+    }
+  }
+
+  let bonus = 0;
+  let nextB2b = b2bActive;
+  if (qualifies) {
+    if (b2bActive) {
+      bonus = Math.floor(base * 0.5);
+    }
+    nextB2b = true;
+  } else if (lines >= 1 && lines <= 3) {
+    nextB2b = false;
+  }
+
+  return { points: base + bonus, b2bActive: nextB2b };
+}
+
 function ensureBag(state) {
   if (state.bag.length === 0) {
     state.bag = shuffledBag(state.rng);
@@ -270,6 +321,9 @@ function stepDown(state) {
     state.lockElapsed = 0;
     updateLowestY(state);
     state.lastAction = "move";
+    if (state.softDrop) {
+      state.score += 1;
+    }
     return;
   }
   if (!state.locking) {
@@ -319,11 +373,15 @@ function tspinType(state) {
 function settlePiece(state) {
   lockPiece(state.board, state.piece);
   state.tspin = tspinType(state);
+  const levelBefore = state.level;
   const result = clearLines(state.board);
   state.board = result.board;
   if (result.cleared > 0) {
     state.lines += result.cleared;
   }
+  const scored = scoreForClear(levelBefore, result.cleared, state.tspin, state.b2bActive);
+  state.score += scored.points;
+  state.b2bActive = scored.b2bActive;
   updateLevel(state);
   state.locking = false;
   state.lockElapsed = 0;
@@ -340,6 +398,7 @@ function serializeState(state) {
     start_level: state.startLevel,
     level: state.level,
     level_progression: state.levelProgression,
+    b2b_active: state.b2bActive,
     piece: { ...state.piece },
     next_piece_shape: state.nextShape,
     score: state.score,
@@ -438,8 +497,13 @@ function rotateWithKick(board, piece, delta) {
 }
 
 function hardDrop(state) {
+  let moved = 0;
   while (move(state, 0, 1, { skipLastAction: true })) {
+    moved += 1;
     // keep dropping
+  }
+  if (moved > 0) {
+    state.score += moved * 2;
   }
   settlePiece(state);
 }

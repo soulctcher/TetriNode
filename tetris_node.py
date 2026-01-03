@@ -259,11 +259,13 @@ def _default_state(seed):
         "bag_count": 0,
         "seed": seed,
         "start_level": 1,
+        "level_progression": "fixed",
         "level": 1,
         "piece": None,
         "next_piece_shape": None,
         "score": 0,
         "lines_cleared_total": 0,
+        "b2b_active": False,
         "game_over": False,
         "last_action": None,
         "last_rotate_kick": None,
@@ -276,9 +278,63 @@ def _default_state(seed):
     return state
 
 
-def _calc_level(start_level, lines_cleared_total):
+def _calc_level(start_level, lines_cleared_total, progression="fixed"):
     start = max(1, min(15, int(start_level)))
+    if progression == "variable":
+        remaining = int(lines_cleared_total)
+        level = start
+        while level < 15:
+            goal = 5 * level
+            if remaining < goal:
+                break
+            remaining -= goal
+            level += 1
+        return max(1, min(15, level))
     return max(1, min(15, start + int(lines_cleared_total // 10)))
+
+
+def _score_action(level, lines_cleared, tspin_type, b2b_active):
+    base = 0
+    qualifies_b2b = False
+    if tspin_type == "tspin":
+        if lines_cleared == 0:
+            base = 400 * level
+        elif lines_cleared == 1:
+            base = 800 * level
+            qualifies_b2b = True
+        elif lines_cleared == 2:
+            base = 1200 * level
+            qualifies_b2b = True
+        elif lines_cleared == 3:
+            base = 1600 * level
+            qualifies_b2b = True
+    elif tspin_type == "mini":
+        if lines_cleared == 0:
+            base = 100 * level
+        else:
+            base = 200 * level
+            qualifies_b2b = True
+    else:
+        if lines_cleared == 1:
+            base = 100 * level
+        elif lines_cleared == 2:
+            base = 300 * level
+        elif lines_cleared == 3:
+            base = 500 * level
+        elif lines_cleared == 4:
+            base = 800 * level
+            qualifies_b2b = True
+
+    bonus = 0
+    next_b2b = b2b_active
+    if qualifies_b2b:
+        if b2b_active:
+            bonus = int(base * 0.5)
+        next_b2b = True
+    elif lines_cleared in {1, 2, 3}:
+        next_b2b = False
+
+    return base + bonus, next_b2b
 
 
 def _deserialize_state(state_json, seed, enforce_seed=True):
@@ -308,10 +364,14 @@ def _deserialize_state(state_json, seed, enforce_seed=True):
         state["score"] = 0
     if "lines_cleared_total" not in state:
         state["lines_cleared_total"] = 0
+    if "b2b_active" not in state:
+        state["b2b_active"] = False
     if "game_over" not in state:
         state["game_over"] = False
     if "start_level" not in state:
         state["start_level"] = 1
+    if "level_progression" not in state:
+        state["level_progression"] = "fixed"
     if "level" not in state:
         state["level"] = state.get("start_level", 1)
     if "last_action" not in state:
@@ -533,6 +593,8 @@ class TetriNode:
             if not _collides(board, moved):
                 piece = moved
                 state_obj["last_action"] = "move"
+                if action == "soft_drop":
+                    state_obj["score"] += 1
         elif action == "rotate_cw":
             piece, kick = _rotate_with_kick(board, piece, 1)
             if piece["rot"] != state_obj["piece"]["rot"] or kick is not None:
@@ -544,10 +606,14 @@ class TetriNode:
                 state_obj["last_action"] = "rotate"
                 state_obj["last_rotate_kick"] = kick
         elif action == "hard_drop":
+            drop_distance = 0
             moved = _move(piece, 0, 1)
             while not _collides(board, moved):
                 piece = moved
+                drop_distance += 1
                 moved = _move(piece, 0, 1)
+            if drop_distance:
+                state_obj["score"] += 2 * drop_distance
 
         if action not in {"hard_drop", "down", "soft_drop"}:
             moved = _move(piece, 0, 1)
@@ -561,10 +627,17 @@ class TetriNode:
                 )
                 board, cleared = _clear_lines(board)
                 lines_cleared = cleared
+                level_before = state_obj.get("level", 1)
+                gained, next_b2b = _score_action(
+                    level_before, cleared, state_obj["tspin"], state_obj.get("b2b_active", False)
+                )
+                state_obj["score"] += gained
+                state_obj["b2b_active"] = next_b2b
                 state_obj["lines_cleared_total"] += cleared
                 state_obj["level"] = _calc_level(
                     state_obj.get("start_level", 1),
                     state_obj["lines_cleared_total"],
+                    state_obj.get("level_progression", "fixed"),
                 )
                 piece = _spawn_piece(next_shape)
                 next_shape = _pop_shape(state_obj)
@@ -579,10 +652,17 @@ class TetriNode:
                 )
                 board, cleared = _clear_lines(board)
                 lines_cleared = cleared
+                level_before = state_obj.get("level", 1)
+                gained, next_b2b = _score_action(
+                    level_before, cleared, state_obj["tspin"], state_obj.get("b2b_active", False)
+                )
+                state_obj["score"] += gained
+                state_obj["b2b_active"] = next_b2b
                 state_obj["lines_cleared_total"] += cleared
                 state_obj["level"] = _calc_level(
                     state_obj.get("start_level", 1),
                     state_obj["lines_cleared_total"],
+                    state_obj.get("level_progression", "fixed"),
                 )
                 piece = _spawn_piece(next_shape)
                 next_shape = _pop_shape(state_obj)
