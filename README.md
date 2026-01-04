@@ -32,8 +32,9 @@ Main gameplay node.
 **Outputs**
 - `image` (IMAGE): current board
 - `state` (STRING): serialized game state
-- `lines_cleared` (INT)
 - `score` (INT)
+- `lines_cleared` (FLOAT): total or awarded line clears (variable goal system)
+- `goal` (FLOAT): lines needed to reach the next level
 - `next_piece` (IMAGE): preview image
 
 ### TetriNode Options
@@ -44,13 +45,15 @@ Optional node that provides keybindings.
 
 **Inputs**
 
-- `move_left`, `move_right`, `rotate_cw`, `rotate_ccw`, `soft_drop`, `hard_drop`, `reset`, `pause`: Key bindings
+- `move_left`, `move_right`, `rotate_cw`, `rotate_ccw`, `soft_drop`, `hard_drop`, `reset`, `pause`: Primary key bindings (dropdowns)
+- `move_left_2`, `move_right_2`, `rotate_cw_2`, `rotate_ccw_2`, `soft_drop_2`, `hard_drop_2`, `reset_2`, `pause_2`: Secondary key bindings (optional)
 - `color_i`, `color_j`, `color_l`, `color_o`, `color_s`, `color_t`, `color_z`: Hex colors for each tetromino (e.g. `#55D6FF`)
 - `background_color`: Hex color for the board background (ignored when a background image is connected)
 - `ghost_piece`: Toggle for the ghost piece (default: on)
 - `lock_down_mode`: Lock down behavior (`extended`, `infinite`, `classic`, default: `extended`)
 - `start_level`: Starting level (1-15, default: 1)
 - `level_progression`: Level goal system (`fixed` or `variable`, default: `fixed`)
+- `queue_size`: Number of queue pieces to display (0-6, default: 6)
 
 **Outputs**
 
@@ -97,6 +100,11 @@ Scoring follows the 2009 Tetris Design Guideline.
 - 0.5× bonus for consecutive Tetrises, T-Spin line clears, and Mini T-Spin line clears
 - Non-line T-Spins/Mini T-Spins do not start a B2B chain and do not break an existing chain
 - Singles/Doubles/Triples break a B2B chain
+
+**Variable goal line awards**
+- When `level_progression` is `variable`, the Lines Cleared counter uses awarded line clears per action.
+- Awarded lines: Single/Mini T-Spin = 1, Mini T-Spin Single = 2, Double = 3, Triple = 5, T-Spin = 4, Tetris/T-Spin Single = 8, T-Spin Double = 12, T-Spin Triple = 16
+- Back-to-Back adds +0.5× awarded line clears
 
 ## Leveling
 

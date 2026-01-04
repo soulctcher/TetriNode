@@ -9,6 +9,7 @@ const GRID_H_VISIBLE = 20;
 const HIDDEN_ROWS = GRID_H_TOTAL - GRID_H_VISIBLE;
 const SPAWN_Y = HIDDEN_ROWS - 2;
 const PREVIEW_GRID = 4;
+const PREVIEW_SCALE = 0.86;
 const BLOCK = 16;
 const PADDING = 12;
 const HEADER_H = 28;
@@ -77,19 +78,25 @@ const SHAPES = {
   ],
 };
 
-function createRng(seed) {
-  let state = seed % 2147483647;
+function createRng(seed, stateOverride = null) {
+  let state = stateOverride != null ? stateOverride : seed % 2147483647;
   if (state <= 0) state += 2147483646;
-  return () => {
-    state = (state * 16807) % 2147483647;
-    return (state - 1) / 2147483646;
+  return {
+    next: () => {
+      state = (state * 16807) % 2147483647;
+      return (state - 1) / 2147483646;
+    },
+    getState: () => state,
+    setState: (value) => {
+      state = value;
+    },
   };
 }
 
 function shuffledBag(rng) {
   const bag = Object.keys(SHAPES);
   for (let i = bag.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(rng() * (i + 1));
+    const j = Math.floor(rng.next() * (i + 1));
     const tmp = bag[i];
     bag[i] = bag[j];
     bag[j] = tmp;
@@ -160,12 +167,16 @@ function createState(seed, startLevel = 1, levelProgression = "fixed") {
     bagCount: 0,
     piece,
     nextShape,
+    holdShape: null,
+    holdUsed: false,
     board: emptyBoard(),
     score: 0,
     lines: 0,
     startLevel: start,
     level,
     levelProgression: progression,
+    goalLinesTotal: 0,
+    goalRemaining: progression === "fixed" ? 10 : 5 * start,
     b2bActive: false,
     running: false,
     started: false,
@@ -207,9 +218,10 @@ function updateLevel(state) {
   let target = state.startLevel;
   const progression = state.levelProgression === "variable" ? "variable" : "fixed";
   if (progression === "fixed") {
+    state.goalLinesTotal = state.lines;
     target = clampLevel(state.startLevel + Math.floor(state.lines / 10));
   } else {
-    let remaining = state.lines;
+    let remaining = state.goalLinesTotal;
     let lvl = state.startLevel;
     while (lvl < 15) {
       const goal = 5 * lvl;
@@ -222,10 +234,62 @@ function updateLevel(state) {
   if (state.level !== target) {
     state.level = target;
   }
+  if (progression === "fixed") {
+    if (state.level >= 15) {
+      state.goalRemaining = 0;
+    } else {
+      const linesIntoLevel = state.lines - (state.level - state.startLevel) * 10;
+      state.goalRemaining = Math.max(0, 10 - linesIntoLevel);
+    }
+  } else {
+    let remaining = state.goalLinesTotal;
+    let lvl = state.startLevel;
+    while (lvl < 15 && remaining >= 5 * lvl) {
+      remaining -= 5 * lvl;
+      lvl += 1;
+    }
+    state.goalRemaining = lvl >= 15 ? 0 : Math.max(0, 5 * lvl - remaining);
+  }
   state.baseDropMs = Math.max(1, Math.round(fallSpeedSeconds(state.level) * 1000));
   state.dropMs = state.softDrop
     ? Math.max(1, Math.floor(state.baseDropMs / 20))
     : state.baseDropMs;
+}
+
+function awardedGoalLines(lines, tspinType, b2bActive) {
+  let base = 0;
+  let qualifies = false;
+  if (tspinType === "tspin") {
+    if (lines === 0) base = 4;
+    else if (lines === 1) {
+      base = 8;
+      qualifies = true;
+    } else if (lines === 2) {
+      base = 12;
+      qualifies = true;
+    } else if (lines === 3) {
+      base = 16;
+      qualifies = true;
+    }
+  } else if (tspinType === "mini") {
+    if (lines === 0) base = 1;
+    else {
+      base = 2;
+      qualifies = true;
+    }
+  } else {
+    if (lines === 1) base = 1;
+    else if (lines === 2) base = 3;
+    else if (lines === 3) base = 5;
+    else if (lines === 4) {
+      base = 8;
+      qualifies = true;
+    }
+  }
+  if (qualifies && b2bActive && base > 0) {
+    base += base * 0.5;
+  }
+  return base;
 }
 
 function scoreForClear(level, lines, tspinType, b2bActive) {
@@ -285,10 +349,26 @@ function ensureBag(state) {
   }
 }
 
+function getUpcomingShapes(state, count) {
+  if (count <= 0) return [];
+  const upcoming = [state.nextShape, ...state.bag];
+  if (upcoming.length >= count) return upcoming.slice(0, count);
+  const rngClone = createRng(state.seed, state.rng.getState());
+  while (upcoming.length < count) {
+    const bag = shuffledBag(rngClone);
+    for (const shape of bag) {
+      upcoming.push(shape);
+      if (upcoming.length >= count) break;
+    }
+  }
+  return upcoming.slice(0, count);
+}
+
 function spawnNext(state) {
   state.piece = newPiece(state.nextShape);
   ensureBag(state);
   state.nextShape = state.bag.shift();
+  state.holdUsed = false;
   state.lockMoves = 0;
   state.lowestY = pieceBottomY(state.piece);
   state.locking = false;
@@ -374,6 +454,7 @@ function settlePiece(state) {
   lockPiece(state.board, state.piece);
   state.tspin = tspinType(state);
   const levelBefore = state.level;
+  const prevB2b = state.b2bActive;
   const result = clearLines(state.board);
   state.board = result.board;
   if (result.cleared > 0) {
@@ -382,6 +463,9 @@ function settlePiece(state) {
   const scored = scoreForClear(levelBefore, result.cleared, state.tspin, state.b2bActive);
   state.score += scored.points;
   state.b2bActive = scored.b2bActive;
+  if (state.levelProgression === "variable") {
+    state.goalLinesTotal += awardedGoalLines(result.cleared, state.tspin, prevB2b);
+  }
   updateLevel(state);
   state.locking = false;
   state.lockElapsed = 0;
@@ -399,8 +483,11 @@ function serializeState(state) {
     level: state.level,
     level_progression: state.levelProgression,
     b2b_active: state.b2bActive,
+    goal_lines_total: state.goalLinesTotal,
     piece: { ...state.piece },
     next_piece_shape: state.nextShape,
+    hold_piece_shape: state.holdShape,
+    hold_used: state.holdUsed,
     score: state.score,
     lines_cleared_total: state.lines,
     game_over: state.gameOver,
@@ -508,6 +595,35 @@ function hardDrop(state) {
   settlePiece(state);
 }
 
+function holdPiece(state) {
+  if (state.holdUsed || state.gameOver) return false;
+  const currentShape = state.piece.shape;
+  if (state.holdShape) {
+    const swapShape = state.holdShape;
+    state.holdShape = currentShape;
+    state.piece = newPiece(swapShape);
+  } else {
+    state.holdShape = currentShape;
+    ensureBag(state);
+    state.piece = newPiece(state.nextShape);
+    state.nextShape = state.bag.shift();
+  }
+  state.holdUsed = true;
+  state.lockMoves = 0;
+  state.lowestY = pieceBottomY(state.piece);
+  state.locking = false;
+  state.lockElapsed = 0;
+  state.lastAction = "hold";
+  state.lastRotateKick = null;
+  state.tspin = "none";
+  updateLevel(state);
+  if (collides(state.board, state.piece)) {
+    state.gameOver = true;
+    state.running = false;
+  }
+  return true;
+}
+
 function drawBlock(ctx, x, y, color) {
   ctx.fillStyle = color;
   ctx.fillRect(x, y, 1, 1);
@@ -565,10 +681,16 @@ function getLayout(node) {
   const innerH = Math.max(0, bottomY - topY);
   const innerW = Math.max(0, node.size[0] - PADDING * 2);
 
+  const showHold = getHoldEnabled(node);
+  const showNext = getNextPieceEnabled(node);
+  const leftSlots = showHold ? 1 : 0;
+  const rightSlots = 1;
+  const sideSlots = leftSlots + rightSlots;
+
   let sideW = 120;
   let blockSize = BLOCK;
   for (let i = 0; i < 2; i += 1) {
-    const boardW = Math.max(0, innerW - sideW - PADDING);
+    const boardW = Math.max(0, innerW - sideW * sideSlots - PADDING * sideSlots);
     blockSize = Math.floor(Math.min(boardW / GRID_W, innerH / GRID_H_VISIBLE));
     blockSize = Math.max(6, blockSize);
     sideW = Math.max(PREVIEW_GRID * blockSize + PADDING * 2, 120);
@@ -576,8 +698,10 @@ function getLayout(node) {
 
   const boardW = blockSize * GRID_W;
   const boardH = blockSize * GRID_H_VISIBLE;
-  const totalW = boardW + sideW + PADDING;
-  const boardX = Math.max(PADDING, (node.size[0] - totalW) / 2 + CENTER_BIAS_X);
+  const totalW = boardW + sideW * sideSlots + PADDING * sideSlots;
+  const leftPad = leftSlots ? sideW + PADDING : 0;
+  const centerBias = showHold && showNext ? 0 : CENTER_BIAS_X;
+  const boardX = Math.max(PADDING, (node.size[0] - totalW) / 2 + leftPad + centerBias);
   const boardY = topY;
   const sideX = boardX + boardW + PADDING;
   const sideY = boardY;
@@ -587,7 +711,18 @@ function getLayout(node) {
     pauseBottom,
   };
 
-  return { boardX, boardY, boardW, boardH, sideX, sideY, blockSize };
+  return {
+    boardX,
+    boardY,
+    boardW,
+    boardH,
+    sideX,
+    sideY,
+    sideW,
+    blockSize,
+    showHold,
+    showNext,
+  };
 }
 
 function getLockMode(node) {
@@ -874,6 +1009,23 @@ function drawBoardBackground(ctx, source, boardX, boardY, boardW, boardH, fallba
   ctx.drawImage(source, sx, sy, cropW, cropH, boardX, boardY, boardW, boardH);
 }
 
+function drawBoardGrid(ctx, boardX, boardY, boardW, boardH, blockSize, color) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 0; x <= GRID_W; x += 1) {
+    const lineX = boardX + x * blockSize + 0.5;
+    ctx.moveTo(lineX, boardY + 0.5);
+    ctx.lineTo(lineX, boardY + boardH - 0.5);
+  }
+  for (let y = 0; y <= GRID_H_VISIBLE; y += 1) {
+    const lineY = boardY + y * blockSize + 0.5;
+    ctx.moveTo(boardX + 0.5, lineY);
+    ctx.lineTo(boardX + boardW - 0.5, lineY);
+  }
+  ctx.stroke();
+}
+
 function drawNode(node, ctx) {
   const live = node.__tetrisLive;
   if (!live) return;
@@ -883,12 +1035,29 @@ function drawNode(node, ctx) {
   syncStartLevel(live.state, node);
   syncSeed(live.state, node);
   const { state } = live;
-  const { boardX, boardY, boardW, boardH, sideX, sideY, blockSize } = getLayout(node);
+  const {
+    boardX,
+    boardY,
+    boardW,
+    boardH,
+    sideX,
+    sideY,
+    sideW,
+    blockSize,
+    showHold,
+    showNext,
+  } = getLayout(node);
   const palette = getColorPalette(node);
   const ghostEnabled = isGhostEnabled(node);
+  const showControls = getShowControls(node);
+  const gridEnabled = getGridEnabled(node);
+  const gridColor = getGridColor(node);
 
   const bgSource = getBackgroundSource(node);
   drawBoardBackground(ctx, bgSource, boardX, boardY, boardW, boardH, palette.X);
+  if (gridEnabled && gridColor) {
+    drawBoardGrid(ctx, boardX, boardY, boardW, boardH, blockSize, gridColor);
+  }
   ctx.strokeStyle = "rgba(150,150,150,0.8)";
   ctx.lineWidth = 1;
   ctx.strokeRect(boardX + 0.5, boardY + 0.5, boardW - 1, boardH - 1);
@@ -919,86 +1088,327 @@ function drawNode(node, ctx) {
     }
   }
 
-  const scoreFontSize = Math.max(10, Math.floor(blockSize * 0.55));
+  const previewBox = Math.max(4, Math.floor(PREVIEW_GRID * blockSize * PREVIEW_SCALE));
+  const rightInset = Math.max(0, Math.floor((sideW - previewBox) / 2));
+  const columnShift = Math.max(4, Math.floor(blockSize * 0.2));
+  const baseLeftX = showHold ? boardX - PADDING - sideW + rightInset : PADDING;
+  const leftX = baseLeftX + columnShift;
+  const rightX = sideX + rightInset + columnShift;
+  const maxWidthRight = Math.max(0, node.size[0] - rightX - PADDING);
+  const leftColumnW = showHold ? previewBox : Math.max(0, boardX - PADDING * 2);
+  const maxWidthLeft = Math.max(0, leftColumnW);
+  const measureFits = (size, lines, maxWidth) => {
+    ctx.font = `bold ${size}px sans-serif`;
+    let widest = ctx.measureText(lines[0]).width;
+    ctx.font = `${size}px sans-serif`;
+    for (let i = 1; i < lines.length; i += 1) {
+      widest = Math.max(widest, ctx.measureText(lines[i]).width);
+    }
+    return widest <= maxWidth;
+  };
+  let hudFontSize = Math.max(8, Math.floor(blockSize * 0.5));
+  while (hudFontSize > 8) {
+    if (measureFits(hudFontSize, ["Lines:", "Score:", "Level:", "Goal:"], maxWidthLeft)) break;
+    hudFontSize -= 1;
+  }
+  const scoreFontSize = Math.max(7, hudFontSize - 1);
+  const innerPad = Math.max(2, Math.floor(blockSize * 0.2));
+  const titleFontSize = Math.max(6, scoreFontSize - 1);
+  const titlePad = Math.max(6, Math.floor(titleFontSize * 0.6));
+  const titleHeight = titleFontSize + titlePad;
+  const nextBoxY = boardY;
   ctx.fillStyle = COLORS.Text;
   const lineGap = Math.floor(scoreFontSize * 0.6);
-  const levelLabelY = sideY + scoreFontSize + 1;
-  const levelValueY = levelLabelY + scoreFontSize + 2;
-  const linesLabelY = levelValueY + lineGap + scoreFontSize;
-  const linesValueY = linesLabelY + scoreFontSize + 2;
-  const scoreLabelY = linesValueY + lineGap + scoreFontSize;
+  const leftHudTopY = showHold ? nextBoxY + previewBox + PADDING * 1.2 : sideY;
+  const scoreLabelY = leftHudTopY + scoreFontSize + 1;
   const scoreValueY = scoreLabelY + scoreFontSize + 2;
+  const linesLabelY = scoreValueY + lineGap + scoreFontSize;
+  const linesValueY = linesLabelY;
+  const levelLabelY = linesLabelY + lineGap + scoreFontSize;
+  const levelValueY = levelLabelY;
+  const goalLabelY = levelLabelY + lineGap + scoreFontSize;
+  const goalValueY = goalLabelY;
   ctx.font = `bold ${scoreFontSize}px sans-serif`;
-  ctx.fillText("Level:", sideX, levelLabelY);
-  ctx.fillText("Lines Cleared:", sideX, linesLabelY);
-  ctx.fillText("Score:", sideX, scoreLabelY);
+  ctx.textAlign = "left";
+  ctx.fillText("Score:", leftX, scoreLabelY);
+  ctx.fillText("Lines:", leftX, linesLabelY);
+  ctx.fillText("Level:", leftX, levelLabelY);
+  ctx.fillText("Goal:", leftX, goalLabelY);
   ctx.font = `${scoreFontSize}px sans-serif`;
-  ctx.fillText(`${state.level}`, sideX, levelValueY);
-  ctx.fillText(`${state.lines}`, sideX, linesValueY);
-  ctx.fillText(`${state.score}`, sideX, scoreValueY);
-  const nextLabelY = scoreValueY + scoreFontSize + lineGap * 2;
-  ctx.font = `bold ${scoreFontSize}px sans-serif`;
-  ctx.fillText("Next Piece:", sideX, nextLabelY);
-
-  const preview = SHAPES[state.nextShape][0];
-  let minX = 99;
-  let minY = 99;
-  let maxX = -99;
-  let maxY = -99;
-  for (const [px, py] of preview) {
-    if (px < minX) minX = px;
-    if (py < minY) minY = py;
-    if (px > maxX) maxX = px;
-    if (py > maxY) maxY = py;
-  }
-  const shapeW = maxX - minX + 1;
-  const shapeH = maxY - minY + 1;
-  const offX = Math.floor((PREVIEW_GRID - shapeW) / 2) - minX;
-  const offY = Math.floor((PREVIEW_GRID - shapeH) / 2) - minY;
-  for (const [px, py] of preview) {
-    const gx = px + offX;
-    const gy = py + offY;
-    if (gx >= 0 && gx < PREVIEW_GRID && gy >= 0 && gy < PREVIEW_GRID) {
-      drawBlockSized(
-        ctx,
-        sideX + gx * blockSize,
-        nextLabelY + 10 + gy * blockSize,
-        blockSize,
-        palette[state.nextShape],
-      );
+  const linesValue = state.levelProgression === "variable" ? state.goalLinesTotal : state.lines;
+  const linesText =
+    Number.isFinite(linesValue) && Math.abs(linesValue % 1) > 0.001
+      ? linesValue.toFixed(1)
+      : `${Math.round(linesValue)}`;
+  const remaining = state.goalRemaining ?? 0;
+  const remainingText =
+    Number.isFinite(remaining) && Math.abs(remaining % 1) > 0.001
+      ? remaining.toFixed(1)
+      : `${Math.round(remaining)}`;
+  const valueX = leftX + previewBox - 2;
+  ctx.textAlign = "right";
+  ctx.fillText(`${state.score}`, valueX, scoreValueY);
+  ctx.fillText(linesText, valueX, linesValueY);
+  ctx.fillText(`${state.level}`, valueX, levelValueY);
+  ctx.fillText(remainingText, valueX, goalValueY);
+  ctx.textAlign = "left";
+  const bindings = getControlBindings(node);
+  const controlEntries = showControls
+    ? [
+      { label: "Move Left:", value: formatKeyList([bindings.moveLeft, bindings.moveLeft2]) },
+      { label: "Move Right:", value: formatKeyList([bindings.moveRight, bindings.moveRight2]) },
+      { label: "Rotate CW:", value: formatKeyList([bindings.rotateCw, bindings.rotateCw2, bindings.rotateCw3, bindings.rotateCw4, bindings.rotateCw5]) },
+      { label: "Rotate CCW:", value: formatKeyList([bindings.rotateCcw, bindings.rotateCcw2, bindings.rotateCcw3, bindings.rotateCcw4]) },
+      { label: "Soft Drop:", value: formatKeyList([bindings.softDrop, bindings.softDrop2]) },
+      { label: "Hard Drop:", value: formatKeyList([bindings.hardDrop, bindings.hardDrop2]) },
+      { label: "Hold:", value: formatKeyList([bindings.hold, bindings.hold2, bindings.hold3]) },
+      { label: "Reset:", value: formatKeyList([bindings.reset, bindings.reset2]) },
+      { label: "Pause:", value: formatKeyList([bindings.pause, bindings.pause2]) },
+    ]
+    : [];
+  let fontSize = Math.max(4, Math.floor(blockSize * 0.3));
+  if (controlEntries.length) {
+    while (fontSize > 8) {
+      const labels = controlEntries.map((entry) => entry.label);
+      if (measureFits(fontSize, labels, maxWidthRight)) break;
+      fontSize -= 1;
     }
   }
-
-  const previewY = nextLabelY + 10;
-  ctx.strokeStyle = "rgba(150,150,150,0.8)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(sideX + 0.5, previewY + 0.5, PREVIEW_GRID * blockSize - 1, PREVIEW_GRID * blockSize - 1);
-
-  const bindings = getControlBindings(node);
-  const infoLines = [
-    "Controls:",
-    `Move Left - ${formatKeyLabel(bindings.moveLeft)}`,
-    `Move Right - ${formatKeyLabel(bindings.moveRight)}`,
-    `Rotate CW - ${formatKeyLabel(bindings.rotateCw)}`,
-    `Rotate CCW - ${formatKeyLabel(bindings.rotateCcw)}`,
-    `Soft Drop - ${formatKeyLabel(bindings.softDrop)}`,
-    `Hard Drop - ${formatKeyLabel(bindings.hardDrop)}`,
-    `Reset - ${bindings.reset.toUpperCase()}`,
-    `Pause - ${bindings.pause.toUpperCase()}`,
-  ];
-  const fontSize = Math.max(9, Math.floor(blockSize * 0.52));
   const lineHeight = fontSize + 3;
-  const infoBlockHeight = infoLines.length * lineHeight;
-  const minInfoY = previewY + PREVIEW_GRID * blockSize + PADDING * 1.4;
+  const tablePad = Math.max(6, Math.floor(fontSize * 0.6));
+  const tableGap = Math.max(6, Math.floor(fontSize * 0.6));
+  let controlsHeight = 0;
+  let leftColWidth = 0;
+  let rightColWidth = 0;
+  let controlRows = [];
+  if (controlEntries.length) {
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    leftColWidth = Math.max(...controlEntries.map((entry) => ctx.measureText(entry.label).width));
+    leftColWidth = Math.min(leftColWidth, Math.max(40, Math.floor(maxWidthRight * 0.45)));
+    rightColWidth = Math.max(0, maxWidthRight - tablePad * 2 - leftColWidth - tableGap);
+    ctx.font = `${fontSize}px sans-serif`;
+    const wrapValue = (value) => {
+      if (!value) return [""];
+      const parts = value.split(" / ");
+      const lines = [];
+      let current = "";
+      for (const part of parts) {
+        const chunk = current ? `${current} / ${part}` : part;
+        if (ctx.measureText(chunk).width <= rightColWidth || !current) {
+          current = chunk;
+        } else {
+          lines.push(current);
+          current = part;
+        }
+      }
+      if (current) lines.push(current);
+      return lines;
+    };
+    controlRows = controlEntries.map((entry) => ({
+      label: entry.label,
+      lines: wrapValue(entry.value),
+    }));
+    controlsHeight = controlRows.reduce((sum, row) => sum + row.lines.length * lineHeight, 0);
+  }
+  const infoBlockHeight = controlEntries.length
+    ? controlsHeight + tablePad * 2 + lineHeight
+    : 0;
+
+  const holdNextTitleY = nextBoxY + titleFontSize + 4;
+  const titleInset = Math.max(4, Math.floor(titleFontSize * 0.5));
+  ctx.font = `bold ${titleFontSize}px sans-serif`;
+  if (showHold) {
+    ctx.fillText("Hold", leftX + titleInset, holdNextTitleY);
+  }
+  if (showNext) {
+    ctx.fillText("Next", rightX + titleInset, holdNextTitleY);
+  }
+
+  const drawPreviewShape = (shape, originX, boxY, cellSize, areaH) => {
+    if (!shape || !SHAPES[shape]) return;
+    const preview = SHAPES[shape][0];
+    let minX = 99;
+    let minY = 99;
+    let maxX = -99;
+    let maxY = -99;
+    for (const [px, py] of preview) {
+      if (px < minX) minX = px;
+      if (py < minY) minY = py;
+      if (px > maxX) maxX = px;
+      if (py > maxY) maxY = py;
+    }
+    const shapeW = maxX - minX + 1;
+    const shapeH = maxY - minY + 1;
+    const areaW = previewBox - innerPad * 2;
+    const contentH = Math.max(0, areaH - innerPad * 2);
+    const offX = Math.floor((areaW - shapeW * cellSize) / 2);
+    const offY = Math.floor((contentH - shapeH * cellSize) / 2);
+    for (const [px, py] of preview) {
+      const gx = px - minX;
+      const gy = py - minY;
+      drawBlockSized(
+        ctx,
+        originX + innerPad + offX + gx * cellSize,
+        boxY + innerPad + offY + gy * cellSize,
+        cellSize,
+        palette[shape],
+      );
+    }
+  };
+
+  const previewContentH = Math.max(4, previewBox - titleHeight);
+  const nextCellSize = Math.max(4, Math.floor((previewContentH - innerPad * 2) / PREVIEW_GRID));
+  if (showHold) {
+    drawPreviewShape(state.holdShape, leftX, nextBoxY + titleHeight, nextCellSize, previewContentH);
+    ctx.strokeStyle = "rgba(150,150,150,0.8)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(leftX + 0.5, nextBoxY + 0.5, previewBox - 1, previewBox - 1);
+  }
+  if (showNext) {
+    drawPreviewShape(state.nextShape, rightX, nextBoxY + titleHeight, nextCellSize, previewContentH);
+    ctx.strokeStyle = "rgba(150,150,150,0.8)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(rightX + 0.5, nextBoxY + 0.5, previewBox - 1, previewBox - 1);
+  }
+
+  const queueCountTarget = showNext ? getQueueSize(node) : 0;
+  const showQueue = queueCountTarget > 0;
+  const queueBoxY = nextBoxY + previewBox + PADDING * 1.2;
+  const queueBoxW = previewBox;
+  const queueBoxX = rightX;
+  const queueTitleY = queueBoxY + titleFontSize + 4;
+  if (showQueue) {
+    ctx.font = `bold ${titleFontSize}px sans-serif`;
+    ctx.fillStyle = COLORS.Text;
+    ctx.fillText("Queue", rightX + titleInset, queueTitleY);
+  }
+
+  const upcoming = getUpcomingShapes(state, queueCountTarget + 1);
+  const queue = upcoming.slice(1, queueCountTarget + 1);
+  const queueGapCells = 1;
+  const queueContentY = queueBoxY + titleHeight;
+  const availableQueueHeight =
+    boardY + boardH - infoBlockHeight - PADDING * 1.4 - queueBoxY;
+  const queueCount = Math.min(queue.length, queueCountTarget);
+  const getShapeBounds = (shape) => {
+    const cells = SHAPES[shape]?.[0] || [];
+    if (!cells.length) return null;
+    let minX = 99;
+    let minY = 99;
+    let maxX = -99;
+    let maxY = -99;
+    for (const [px, py] of cells) {
+      if (px < minX) minX = px;
+      if (py < minY) minY = py;
+      if (px > maxX) maxX = px;
+      if (py > maxY) maxY = py;
+    }
+    return {
+      minX,
+      minY,
+      width: maxX - minX + 1,
+      height: maxY - minY + 1,
+    };
+  };
+  const boundsList = queue
+    .slice(0, queueCount)
+    .map((shape) => getShapeBounds(shape))
+    .filter(Boolean);
+  const shapeHeights = boundsList.map((bounds) => bounds.height);
+  const shapeWidths = boundsList.map((bounds) => bounds.width);
+  const totalCells =
+    shapeHeights.reduce((sum, h) => sum + h, 0) + Math.max(0, queueCount - 1) * queueGapCells;
+  const maxShapeWidth = shapeWidths.length ? Math.max(...shapeWidths) : PREVIEW_GRID;
+  const availableInnerH = Math.max(0, availableQueueHeight - titleHeight - innerPad * 2);
+  const maxCellByHeight = totalCells > 0 ? Math.floor(availableInnerH / totalCells) : 0;
+  const maxCellByWidth = Math.floor((queueBoxW - innerPad * 2) / maxShapeWidth);
+  const queueCellSize = Math.max(4, Math.min(maxCellByHeight, maxCellByWidth));
+  const drawQueueCount = queueCellSize > 0 ? boundsList.length : 0;
+  let cursorY = queueContentY + innerPad;
+  boundsList.slice(0, drawQueueCount).forEach((bounds, idx) => {
+    const shape = queue[idx];
+    if (!shape || !SHAPES[shape]) return;
+    const shapeOffsetX = Math.max(
+      0,
+      Math.floor(
+        (queueBoxW - innerPad * 2 - bounds.width * queueCellSize) / 2,
+      ),
+    );
+    for (const [px, py] of SHAPES[shape][0]) {
+      const gx = px - bounds.minX;
+      const gy = py - bounds.minY;
+      drawBlockSized(
+        ctx,
+        queueBoxX + innerPad + shapeOffsetX + gx * queueCellSize,
+        cursorY + gy * queueCellSize,
+        queueCellSize,
+        palette[shape],
+      );
+    }
+    cursorY += bounds.height * queueCellSize;
+    if (idx < drawQueueCount - 1) {
+      cursorY += queueGapCells * queueCellSize;
+    }
+  });
+  if (showQueue && drawQueueCount > 0) {
+    ctx.strokeStyle = "rgba(150,150,150,0.8)";
+    ctx.lineWidth = 1;
+    const outlineHeight = Math.min(
+      availableQueueHeight,
+      shapeHeights
+        .slice(0, drawQueueCount)
+        .reduce((sum, h) => sum + h, 0) * queueCellSize
+        + Math.max(0, drawQueueCount - 1) * queueGapCells * queueCellSize
+        + innerPad * 2
+        + titleHeight,
+    );
+    ctx.strokeRect(queueBoxX + 0.5, queueBoxY + 0.5, queueBoxW - 1, outlineHeight - 1);
+  }
+
+  const previewBottom = nextBoxY + previewBox;
+  const queueBottom =
+    showQueue && drawQueueCount > 0
+      ? queueBoxY
+        + Math.min(
+          availableQueueHeight,
+          shapeHeights
+            .slice(0, drawQueueCount)
+            .reduce((sum, h) => sum + h, 0) * queueCellSize
+            + Math.max(0, drawQueueCount - 1) * queueGapCells * queueCellSize
+            + innerPad * 2
+            + titleHeight,
+        )
+      : previewBottom;
+  const minInfoY = queueBottom + PADDING * 1.6 + 22;
   const maxInfoY = boardY + boardH - infoBlockHeight;
   const infoY = maxInfoY < minInfoY ? maxInfoY : Math.max(minInfoY, maxInfoY);
   const baseInfoY = infoY;
-  ctx.fillStyle = COLORS.Text;
-  ctx.font = `bold ${fontSize}px sans-serif`;
-  ctx.fillText(infoLines[0], sideX, baseInfoY);
-  ctx.font = `${fontSize}px sans-serif`;
-  for (let i = 1; i < infoLines.length; i += 1) {
-    ctx.fillText(infoLines[i], sideX, baseInfoY + i * lineHeight);
+  if (controlEntries.length) {
+    ctx.fillStyle = COLORS.Text;
+    ctx.font = `bold ${titleFontSize}px sans-serif`;
+    const tableY = baseInfoY;
+    const tableX = rightX;
+    const tableW = Math.max(0, maxWidthRight);
+    const tableH = Math.max(0, boardY + boardH - tableY);
+    ctx.fillText("Controls", rightX + titleInset, tableY + titleFontSize + 4);
+    ctx.strokeStyle = "rgba(150,150,150,0.8)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(tableX + 0.5, tableY + 0.5, tableW - 1, tableH - 1);
+    ctx.font = `${fontSize}px sans-serif`;
+    let rowY = tableY + titleHeight + tablePad + Math.floor(fontSize * 0.25);
+    for (const row of controlRows) {
+      const labelX = tableX + tablePad + leftColWidth;
+      ctx.textAlign = "right";
+      ctx.fillText(row.label, labelX, rowY);
+      ctx.textAlign = "left";
+      const valueX = tableX + tablePad + leftColWidth + tableGap;
+      for (let i = 0; i < row.lines.length; i += 1) {
+        const lineY = rowY + i * lineHeight;
+        ctx.fillText(row.lines[i], valueX, lineY);
+      }
+      rowY += row.lines.length * lineHeight;
+    }
+    ctx.textAlign = "left";
   }
 
   if (state.gameOver) {
@@ -1015,7 +1425,12 @@ function drawNode(node, ctx) {
     const statusFont = Math.max(12, Math.floor(blockSize * 0.8));
     const subFont = Math.max(10, Math.floor(blockSize * 0.55));
     const label = state.started ? "Paused" : "Start a new game";
-    const sublabel = state.started ? "Press P to resume" : "Press Reset or P";
+    const pauseLabel = formatKeyLabel(bindings.pause) || "Pause";
+    const pauseAlt = formatKeyLabel(bindings.pause2);
+    const pauseHint = pauseAlt ? `${pauseLabel} (or ${pauseAlt})` : pauseLabel;
+    const sublabel = state.started
+      ? `Press ${pauseHint} to resume`
+      : "Press Reset or Pause to play";
     ctx.font = `${statusFont}px sans-serif`;
     ctx.fillText(label, boardX + 28, boardY + boardH / 2 - Math.floor(subFont));
     ctx.font = `${subFont}px sans-serif`;
@@ -1123,6 +1538,8 @@ function resetNode(node) {
   const startLevel = getStartLevel(node);
   const progression = getLevelProgression(node);
   live.state = createState(seed ?? live.state.seed, startLevel, progression);
+  node.size = [750, 950];
+  node.__tetrisSizeInitialized = true;
   live.state.started = true;
   live.state.running = true;
   updateBackendState(node);
@@ -1217,55 +1634,96 @@ function handleKey(event) {
   const node = getSelectedLiveNode(false);
   if (!node) return;
   const live = node.__tetrisLive;
-  if (!live || live.state.gameOver) return;
+  if (!live) return;
 
   const state = live.state;
   const bindings = getControlBindings(node);
-  const key = event.key.toLowerCase();
-  if (event.repeat && (key === bindings.rotateCw || key === bindings.rotateCcw)) {
+  const matches = (binding) => keyMatches(event, binding);
+  const resetPressed = matches(bindings.reset) || matches(bindings.reset2);
+  const pausePressed = matches(bindings.pause) || matches(bindings.pause2);
+  if (state.gameOver) {
+    if (resetPressed || pausePressed) {
+      resetNode(node);
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    return;
+  }
+  if (
+    event.repeat
+    && (matches(bindings.rotateCw)
+      || matches(bindings.rotateCw2)
+      || matches(bindings.rotateCw3)
+      || matches(bindings.rotateCw4)
+      || matches(bindings.rotateCw5)
+      || matches(bindings.rotateCcw)
+      || matches(bindings.rotateCcw2)
+      || matches(bindings.rotateCcw3)
+      || matches(bindings.rotateCcw4)
+      || matches(bindings.moveLeft)
+      || matches(bindings.moveLeft2)
+      || matches(bindings.moveRight)
+      || matches(bindings.moveRight2)
+      || matches(bindings.softDrop)
+      || matches(bindings.softDrop2)
+      || matches(bindings.hardDrop)
+      || matches(bindings.hardDrop2)
+      || matches(bindings.hold)
+      || matches(bindings.hold2)
+      || matches(bindings.hold3))
+  ) {
     event.preventDefault();
     event.stopPropagation();
     return;
   }
-  const canAct = state.running || key === bindings.pause || key === bindings.reset;
+  const canAct =
+    state.running ||
+    matches(bindings.pause) ||
+    matches(bindings.pause2) ||
+    matches(bindings.reset) ||
+    matches(bindings.reset2);
   if (!canAct) return;
   let handled = true;
-  switch (key) {
-    case bindings.moveLeft:
-      state.moveHeldLeft = true;
-      setMoveDirection(state, "left");
-      if (move(state, -1, 0)) applyLockModeAfterAction(state, getLockMode(node));
-      break;
-    case bindings.moveRight:
-      state.moveHeldRight = true;
-      setMoveDirection(state, "right");
-      if (move(state, 1, 0)) applyLockModeAfterAction(state, getLockMode(node));
-      break;
-    case bindings.rotateCw:
-      if (rotate(state, 1)) {
-        applyLockModeAfterAction(state, getLockMode(node));
-      }
-      break;
-    case bindings.rotateCcw:
-      if (rotate(state, -1)) {
-        applyLockModeAfterAction(state, getLockMode(node));
-      }
-      break;
-    case bindings.softDrop:
-      state.softDrop = true;
-      state.dropMs = Math.max(1, Math.floor(state.baseDropMs / 20));
-      break;
-    case bindings.hardDrop:
-      hardDrop(state);
-      break;
-    case bindings.reset:
-      resetNode(node);
-      break;
-    case bindings.pause:
-      togglePause(node);
-      break;
-    default:
-      handled = false;
+  if (matches(bindings.moveLeft) || matches(bindings.moveLeft2)) {
+    state.moveHeldLeft = true;
+    setMoveDirection(state, "left");
+    if (move(state, -1, 0)) applyLockModeAfterAction(state, getLockMode(node));
+  } else if (matches(bindings.moveRight) || matches(bindings.moveRight2)) {
+    state.moveHeldRight = true;
+    setMoveDirection(state, "right");
+    if (move(state, 1, 0)) applyLockModeAfterAction(state, getLockMode(node));
+  } else if (
+    matches(bindings.rotateCw)
+    || matches(bindings.rotateCw2)
+    || matches(bindings.rotateCw3)
+    || matches(bindings.rotateCw4)
+    || matches(bindings.rotateCw5)
+  ) {
+    if (rotate(state, 1)) {
+      applyLockModeAfterAction(state, getLockMode(node));
+    }
+  } else if (
+    matches(bindings.rotateCcw)
+    || matches(bindings.rotateCcw2)
+    || matches(bindings.rotateCcw3)
+    || matches(bindings.rotateCcw4)
+  ) {
+    if (rotate(state, -1)) {
+      applyLockModeAfterAction(state, getLockMode(node));
+    }
+  } else if (matches(bindings.softDrop) || matches(bindings.softDrop2)) {
+    state.softDrop = true;
+    state.dropMs = Math.max(1, Math.floor(state.baseDropMs / 20));
+  } else if (matches(bindings.hardDrop) || matches(bindings.hardDrop2)) {
+    hardDrop(state);
+  } else if (matches(bindings.hold) || matches(bindings.hold2) || matches(bindings.hold3)) {
+    holdPiece(state);
+  } else if (matches(bindings.reset) || matches(bindings.reset2)) {
+    resetNode(node);
+  } else if (matches(bindings.pause) || matches(bindings.pause2)) {
+    togglePause(node);
+  } else {
+    handled = false;
   }
 
   if (handled) {
@@ -1283,8 +1741,8 @@ function handleKeyUp(event) {
   const live = node.__tetrisLive;
   if (!live || live.state.gameOver) return;
   const bindings = getControlBindings(node);
-  const key = event.key.toLowerCase();
-  if (key === bindings.moveLeft) {
+  const matches = (binding) => keyMatches(event, binding);
+  if (matches(bindings.moveLeft) || matches(bindings.moveLeft2)) {
     live.state.moveHeldLeft = false;
     if (live.state.moveHeldRight) {
       setMoveDirection(live.state, "right");
@@ -1292,7 +1750,7 @@ function handleKeyUp(event) {
       clearMoveDirection(live.state);
     }
   }
-  if (key === bindings.moveRight) {
+  if (matches(bindings.moveRight) || matches(bindings.moveRight2)) {
     live.state.moveHeldRight = false;
     if (live.state.moveHeldLeft) {
       setMoveDirection(live.state, "left");
@@ -1300,7 +1758,7 @@ function handleKeyUp(event) {
       clearMoveDirection(live.state);
     }
   }
-  if (key !== bindings.softDrop) return;
+  if (!matches(bindings.softDrop) && !matches(bindings.softDrop2)) return;
   live.state.softDrop = false;
   live.state.dropMs = live.state.baseDropMs;
 }
@@ -1329,7 +1787,10 @@ function applyWidgetHiding(node) {
 
 function ensureOptionsDivider(node) {
   if (!node?.widgets) return;
-  const insertAfter = node.widgets.findIndex((w) => w.name === "pause");
+  let insertAfter = node.widgets.findIndex((w) => w.name === "pause_2");
+  if (insertAfter < 0) {
+    insertAfter = node.widgets.findIndex((w) => w.name === "pause");
+  }
   if (insertAfter < 0) return;
   const existingIndex = node.widgets.findIndex((w) => w.name === "divider");
   const divider = {
@@ -1502,20 +1963,43 @@ function getSeedValue(node, options = {}) {
 
 function getControlBindings(node) {
   const defaultBindings = {
-    moveLeft: "a",
-    moveRight: "d",
-    rotateCw: "w",
-    rotateCcw: "q",
-    softDrop: "s",
+    moveLeft: "arrowleft",
+    moveLeft2: "numpad4",
+    moveRight: "arrowright",
+    moveRight2: "numpad6",
+    rotateCw: "arrowup",
+    rotateCw2: "numpad5",
+    rotateCw3: "x",
+    rotateCw4: "numpad1",
+    rotateCw5: "numpad9",
+    rotateCcw: "control",
+    rotateCcw2: "numpad3",
+    rotateCcw3: "z",
+    rotateCcw4: "numpad7",
+    softDrop: "arrowdown",
+    softDrop2: "numpad2",
     hardDrop: " ",
+    hardDrop2: "numpad8",
+    hold: "shift",
+    hold2: "numpad0",
+    hold3: "c",
     reset: "r",
-    pause: "p",
+    reset2: null,
+    pause: "escape",
+    pause2: "f1",
   };
   if (!node) return defaultBindings;
   const normalizeKey = (value) => {
     const raw = `${value}`.trim().toLowerCase();
     if (!raw) return raw;
     if (raw === "space" || raw === "spacebar") return " ";
+    if (raw === "backslash") return "\\";
+    if (raw === "slash") return "/";
+    if (raw === "forwardslash") return "/";
+    if (raw === "control" || raw === "ctrl") return "control";
+    if (raw === "shift") return "shift";
+    if (raw === "f1") return "f1";
+    if (raw === "none") return null;
     return raw;
   };
   const linked = getLinkedOptionsNode(node);
@@ -1536,21 +2020,197 @@ function getControlBindings(node) {
     }
     return normalizeKey(fallback);
   };
+  const primary = (name, fallback) => lookup(name, fallback);
+  const secondary = (name) => lookup(name, null);
   return {
-    moveLeft: lookup("move_left", defaultBindings.moveLeft),
-    moveRight: lookup("move_right", defaultBindings.moveRight),
-    rotateCw: lookup("rotate_cw", defaultBindings.rotateCw),
-    rotateCcw: lookup("rotate_ccw", defaultBindings.rotateCcw),
-    softDrop: lookup("soft_drop", defaultBindings.softDrop),
-    hardDrop: lookup("hard_drop", defaultBindings.hardDrop),
-    reset: lookup("reset", defaultBindings.reset),
-    pause: lookup("pause", defaultBindings.pause),
+    moveLeft: primary("move_left", defaultBindings.moveLeft),
+    moveLeft2: secondary("move_left_2"),
+    moveRight: primary("move_right", defaultBindings.moveRight),
+    moveRight2: secondary("move_right_2"),
+    rotateCw: primary("rotate_cw", defaultBindings.rotateCw),
+    rotateCw2: secondary("rotate_cw_2"),
+    rotateCw3: primary("rotate_cw_3", defaultBindings.rotateCw3),
+    rotateCw4: primary("rotate_cw_4", defaultBindings.rotateCw4),
+    rotateCw5: primary("rotate_cw_5", defaultBindings.rotateCw5),
+    rotateCcw: primary("rotate_ccw", defaultBindings.rotateCcw),
+    rotateCcw2: secondary("rotate_ccw_2"),
+    rotateCcw3: primary("rotate_ccw_3", defaultBindings.rotateCcw3),
+    rotateCcw4: primary("rotate_ccw_4", defaultBindings.rotateCcw4),
+    softDrop: primary("soft_drop", defaultBindings.softDrop),
+    softDrop2: secondary("soft_drop_2"),
+    hardDrop: primary("hard_drop", defaultBindings.hardDrop),
+    hardDrop2: secondary("hard_drop_2"),
+    hold: primary("hold", defaultBindings.hold),
+    hold2: secondary("hold_2"),
+    hold3: primary("hold_3", defaultBindings.hold3),
+    reset: primary("reset", defaultBindings.reset),
+    reset2: secondary("reset_2"),
+    pause: primary("pause", defaultBindings.pause),
+    pause2: secondary("pause_2"),
   };
 }
 
+function getQueueSize(node) {
+  const clamp = (value) => {
+    const parsed = Number.parseInt(`${value}`, 10);
+    if (!Number.isFinite(parsed)) return null;
+    return Math.max(0, Math.min(6, parsed));
+  };
+  const linked = getLinkedOptionsNode(node);
+  if (linked?.widgets) {
+    const widget = linked.widgets.find((w) => w.name === "queue_size");
+    const parsed = clamp(widget?.value);
+    if (parsed != null) return parsed;
+  }
+  if (node?.widgets) {
+    const widget = node.widgets.find((w) => w.name === "queue_size");
+    const parsed = clamp(widget?.value);
+    if (parsed != null) return parsed;
+  }
+  return 6;
+}
+
+function getBoolOption(node, name, defaultValue) {
+  const coerce = (value) => {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      const raw = value.trim().toLowerCase();
+      if (raw === "true") return true;
+      if (raw === "false") return false;
+    }
+    return null;
+  };
+  const linked = getLinkedOptionsNode(node);
+  if (linked?.widgets) {
+    const widget = linked.widgets.find((w) => w.name === name);
+    const parsed = coerce(widget?.value);
+    if (parsed != null) return parsed;
+  }
+  if (node?.widgets) {
+    const widget = node.widgets.find((w) => w.name === name);
+    const parsed = coerce(widget?.value);
+    if (parsed != null) return parsed;
+  }
+  return defaultValue;
+}
+
+function getHoldEnabled(node) {
+  return getBoolOption(node, "hold_queue", true);
+}
+
+function getNextPieceEnabled(node) {
+  return getBoolOption(node, "next_piece", true);
+}
+
+function getShowControls(node) {
+  return getBoolOption(node, "show_controls", true);
+}
+
+function getGridEnabled(node) {
+  return getBoolOption(node, "grid_enabled", true);
+}
+
+function getGridColor(node) {
+  const linked = getLinkedOptionsNode(node);
+  if (linked?.widgets) {
+    const widget = linked.widgets.find((w) => w.name === "grid_color");
+    const parsed = parseRgbaColor(widget?.value);
+    if (parsed) return parsed;
+  }
+  if (node?.widgets) {
+    const widget = node.widgets.find((w) => w.name === "grid_color");
+    const parsed = parseRgbaColor(widget?.value);
+    if (parsed) return parsed;
+  }
+  return "rgba(255,255,255,0.08)";
+}
+
 function formatKeyLabel(value) {
-  if (value === " ") return "SPACE";
+  if (!value) return "";
+  if (value === "null" || value === "none") return "";
+  if (value === " ") return "␣";
+  if (value === "\\") return "\\";
+  if (value === "/") return "/";
+  if (value === "control") return "Ctrl";
+  if (value === "shift") return "⇧";
+  if (value === "escape") return "Esc";
+  if (value === "enter") return "Enter";
+  if (value === "tab") return "Tab";
+  if (value === "backspace") return "Bksp";
+  if (value === "delete") return "Del";
+  if (value === "insert") return "Ins";
+  if (value === "home") return "Home";
+  if (value === "end") return "End";
+  if (value === "pageup") return "PgUp";
+  if (value === "pagedown") return "PgDn";
+  if (value === "arrowleft") return "⬅";
+  if (value === "arrowright") return "➡";
+  if (value === "arrowup") return "⬆";
+  if (value === "arrowdown") return "⬇";
+  if (value.startsWith("numpad")) {
+    return value.replace("numpad", "Num");
+  }
   return value.toUpperCase();
+}
+
+function formatKeyList(values) {
+  if (!values) return "";
+  const items = values
+    .map((value) => formatKeyLabel(value))
+    .filter((value) => value);
+  return items.join(" / ");
+}
+
+function formatKeyPair(primary, secondary) {
+  const first = formatKeyLabel(primary);
+  const second = formatKeyLabel(secondary);
+  if (second) return `${first} / ${second}`;
+  return first;
+}
+
+function normalizeEventKey(event) {
+  const key = event.key ? event.key.toLowerCase() : "";
+  const code = event.code ? event.code.toLowerCase() : "";
+  return { key, code };
+}
+
+function keyMatches(event, binding) {
+  if (!binding) return false;
+  const bindings = Array.isArray(binding) ? binding : [binding];
+  const { key, code } = normalizeEventKey(event);
+  return bindings.some((value) => {
+    if (!value) return false;
+    if (value === " ") return key === " " || code === "space";
+    if (value.startsWith("numpad")) {
+      return code === value;
+    }
+    return key === value;
+  });
+}
+
+function parseRgbaColor(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("#")) {
+    const hex = trimmed.slice(1);
+    if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
+    const r = Number.parseInt(hex.slice(0, 2), 16);
+    const g = Number.parseInt(hex.slice(2, 4), 16);
+    const b = Number.parseInt(hex.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},0.12)`;
+  }
+  const rgbaMatch = trimmed.match(
+    /^rgba?\s*\(\s*([0-9]{1,3})\s*,\s*([0-9]{1,3})\s*,\s*([0-9]{1,3})(?:\s*,\s*([0-9]*\.?[0-9]+))?\s*\)$/i,
+  );
+  if (!rgbaMatch) return null;
+  const r = Number.parseInt(rgbaMatch[1], 10);
+  const g = Number.parseInt(rgbaMatch[2], 10);
+  const b = Number.parseInt(rgbaMatch[3], 10);
+  const a = rgbaMatch[4] != null ? Number.parseFloat(rgbaMatch[4]) : 0.12;
+  if ([r, g, b].some((v) => !Number.isFinite(v) || v < 0 || v > 255)) return null;
+  if (!Number.isFinite(a) || a < 0 || a > 1) return null;
+  return `rgba(${r},${g},${b},${a})`;
 }
 
 function parseHexColor(value) {
@@ -1748,14 +2408,10 @@ app.registerExtension({
     const progression = getLevelProgression(node);
     node.__tetrisLive = { state: createState(seed ?? 0, startLevel, progression) };
 
-    const boardW = GRID_W * BLOCK;
-    const boardH = GRID_H_VISIBLE * BLOCK;
-    const sideW = PREVIEW_GRID * BLOCK + PADDING * 2;
-    const widgetArea = 60;
-    node.size = [
-      boardW + sideW + PADDING * 2,
-      boardH + HEADER_H + PADDING + widgetArea,
-    ];
+    if (!node.__tetrisSizeInitialized) {
+      node.size = [750, 950];
+      node.__tetrisSizeInitialized = true;
+    }
 
     node.addWidget("button", "Reset", "Reset", () => resetNode(node));
     node.addWidget("button", "Pause/Play", "Pause", () => togglePause(node));

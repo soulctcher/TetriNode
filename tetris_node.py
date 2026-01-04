@@ -1,5 +1,6 @@
 import json
 import random
+import re
 
 import numpy as np
 import torch
@@ -70,6 +71,104 @@ COLORS = {
     "X": (50, 52, 62),
 }
 
+KEY_OPTIONS = [
+    "F1",
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F",
+    "G",
+    "H",
+    "I",
+    "J",
+    "K",
+    "L",
+    "M",
+    "N",
+    "O",
+    "P",
+    "Q",
+    "R",
+    "S",
+    "T",
+    "U",
+    "V",
+    "W",
+    "X",
+    "Y",
+    "Z",
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "ArrowLeft",
+    "ArrowRight",
+    "ArrowUp",
+    "ArrowDown",
+    "Space",
+    "Enter",
+    "Escape",
+    "Tab",
+    "Backspace",
+    "Delete",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+    "Insert",
+    "Control",
+    "Shift",
+    "Numpad0",
+    "Numpad1",
+    "Numpad2",
+    "Numpad3",
+    "Numpad4",
+    "Numpad5",
+    "Numpad6",
+    "Numpad7",
+    "Numpad8",
+    "Numpad9",
+    "NumpadAdd",
+    "NumpadSubtract",
+    "NumpadMultiply",
+    "NumpadDivide",
+    "NumpadDecimal",
+    "NumpadEnter",
+    "F1",
+    "F2",
+    "F3",
+    "F4",
+    "F5",
+    "F6",
+    "F7",
+    "F8",
+    "F9",
+    "F10",
+    "F11",
+    "F12",
+    "-",
+    "=",
+    "[",
+    "]",
+    "Backslash",
+    ";",
+    "'",
+    ",",
+    ".",
+    "Slash",
+    "`",
+]
+
+KEY_OPTIONS_WITH_NONE = ["None", *KEY_OPTIONS]
+
 
 def _empty_board():
     return [[0 for _ in range(BOARD_WIDTH)] for _ in range(BOARD_HEIGHT)]
@@ -91,6 +190,7 @@ def _pop_shape(state):
 
 def _spawn_piece(shape):
     return {"shape": shape, "rot": 0, "x": 3, "y": SPAWN_Y}
+
 
 
 def _piece_cells(piece):
@@ -161,18 +261,23 @@ def _parse_hex_color(value):
     return (r, g, b)
 
 
-def _resolve_colors(options_payload):
-    colors = dict(COLORS)
+def _resolve_options(options_payload):
     if not options_payload:
-        return colors
+        return {}
     payload = options_payload
     if isinstance(options_payload, str):
         try:
             payload = json.loads(options_payload)
         except json.JSONDecodeError:
-            return colors
+            return {}
     if not isinstance(payload, dict):
-        return colors
+        return {}
+    return payload
+
+
+def _resolve_colors(options_payload):
+    colors = dict(COLORS)
+    payload = _resolve_options(options_payload)
     mapping = {
         "color_i": "I",
         "color_j": "J",
@@ -190,15 +295,104 @@ def _resolve_colors(options_payload):
     return colors
 
 
-def _render(board, piece, block_size, background_image=None, colors=None):
+def _resolve_bool(options, key, default):
+    if not isinstance(options, dict):
+        return default
+    value = options.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    return default
+
+
+def _parse_rgba_color(value):
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.startswith("#"):
+        rgb = _parse_hex_color(text)
+        if rgb:
+            return (*rgb, 31)
+        return None
+    match = re.match(
+        r"rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([0-9]*\.?[0-9]+))?\s*\)",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    r = int(match.group(1))
+    g = int(match.group(2))
+    b = int(match.group(3))
+    a = float(match.group(4)) if match.group(4) is not None else 0.12
+    if not (0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255 and 0 <= a <= 1):
+        return None
+    return (r, g, b, int(round(a * 255)))
+
+
+def _ghost_piece(board, piece):
+    ghost = dict(piece)
+    moved = _move(ghost, 0, 1)
+    while not _collides(board, moved):
+        ghost = moved
+        moved = _move(ghost, 0, 1)
+    return ghost
+
+
+def _draw_grid(img, block_size, width, height, color):
+    if not color:
+        return img
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    for x in range(BOARD_WIDTH + 1):
+        xpos = x * block_size
+        draw.line([xpos, 0, xpos, height], fill=color, width=1)
+    for y in range(VISIBLE_HEIGHT + 1):
+        ypos = y * block_size
+        draw.line([0, ypos, width, ypos], fill=color, width=1)
+    return Image.alpha_composite(img, overlay)
+
+
+def _draw_ghost(img, board, piece, block_size, color):
+    if not color:
+        return img
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    ghost = _ghost_piece(board, piece)
+    fill = (*color, 84)
+    outline = (*color, 171)
+    for x, y in _piece_cells(ghost):
+        if HIDDEN_ROWS <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
+            x0 = x * block_size
+            y0 = (y - HIDDEN_ROWS) * block_size
+            draw.rectangle(
+                [x0, y0, x0 + block_size - 2, y0 + block_size - 2],
+                fill=fill,
+            )
+            draw.rectangle(
+                [x0 + 1, y0 + 1, x0 + block_size - 2, y0 + block_size - 2],
+                outline=outline,
+            )
+    return Image.alpha_composite(img, overlay)
+
+
+def _render(board, piece, block_size, background_image=None, colors=None, ghost_enabled=False, grid_color=None):
     width = BOARD_WIDTH * block_size
     height = VISIBLE_HEIGHT * block_size
     palette = colors or COLORS
     bg = _prepare_background(background_image, width, height)
     if bg is not None:
-        img = bg
+        img = bg.convert("RGBA")
     else:
-        img = Image.new("RGB", (width, height), palette["X"])
+        img = Image.new("RGBA", (width, height), (*palette["X"], 255))
+    img = _draw_grid(img, block_size, width, height, grid_color)
     draw = ImageDraw.Draw(img)
 
     for y in range(VISIBLE_HEIGHT):
@@ -211,6 +405,10 @@ def _render(board, piece, block_size, background_image=None, colors=None):
                 y0 = y * block_size
                 draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=color)
 
+    if ghost_enabled:
+        img = _draw_ghost(img, board, piece, block_size, palette[piece["shape"]])
+        draw = ImageDraw.Draw(img)
+
     for x, y in _piece_cells(piece):
         if HIDDEN_ROWS <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
             color = palette[piece["shape"]]
@@ -218,7 +416,7 @@ def _render(board, piece, block_size, background_image=None, colors=None):
             y0 = (y - HIDDEN_ROWS) * block_size
             draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=color)
 
-    arr = np.array(img).astype(np.float32) / 255.0
+    arr = np.array(img.convert("RGB")).astype(np.float32) / 255.0
     return torch.from_numpy(arr)[None, ...]
 
 
@@ -251,6 +449,58 @@ def _render_next_piece(shape, block_size, colors=None):
     return torch.from_numpy(arr)[None, ...]
 
 
+def _get_upcoming_shapes(state, count):
+    if count <= 0:
+        return []
+    upcoming = [state.get("next_piece_shape")] + list(state.get("bag", []))
+    bag_count = state.get("bag_count", 0)
+    seed = state.get("seed", 0)
+    while len(upcoming) < count:
+        bag = _new_bag(seed, bag_count)
+        bag_count += 1
+        upcoming.extend(bag)
+    return upcoming[:count]
+
+
+def _render_queue(shapes, block_size, colors=None):
+    palette = colors or COLORS
+    if not shapes:
+        size = PREVIEW_GRID * block_size
+        img = Image.new("RGB", (size, size), palette["X"])
+        arr = np.array(img).astype(np.float32) / 255.0
+        return torch.from_numpy(arr)[None, ...]
+    gap = block_size
+    width = PREVIEW_GRID * block_size
+    height = len(shapes) * PREVIEW_GRID * block_size + max(0, len(shapes) - 1) * gap
+    img = Image.new("RGB", (width, height), palette["X"])
+    draw = ImageDraw.Draw(img)
+    for idx, shape in enumerate(shapes):
+        if shape not in SHAPES:
+            continue
+        offset_y = idx * (PREVIEW_GRID * block_size + gap)
+        cells = SHAPES[shape][0]
+        min_x = min(x for x, _ in cells)
+        min_y = min(y for _, y in cells)
+        max_x = max(x for x, _ in cells)
+        max_y = max(y for _, y in cells)
+        shape_w = max_x - min_x + 1
+        shape_h = max_y - min_y + 1
+        offset_x = (PREVIEW_GRID - shape_w) // 2 - min_x
+        offset_cell_y = (PREVIEW_GRID - shape_h) // 2 - min_y
+        for x, y in cells:
+            gx = x + offset_x
+            gy = y + offset_cell_y
+            if 0 <= gx < PREVIEW_GRID and 0 <= gy < PREVIEW_GRID:
+                x0 = gx * block_size
+                y0 = offset_y + gy * block_size
+                draw.rectangle(
+                    [x0, y0, x0 + block_size - 2, y0 + block_size - 2],
+                    fill=palette[shape],
+                )
+    arr = np.array(img).astype(np.float32) / 255.0
+    return torch.from_numpy(arr)[None, ...]
+
+
 def _default_state(seed):
     state = {
         "version": STATE_VERSION,
@@ -263,8 +513,11 @@ def _default_state(seed):
         "level": 1,
         "piece": None,
         "next_piece_shape": None,
+        "hold_piece_shape": None,
+        "hold_used": False,
         "score": 0,
         "lines_cleared_total": 0,
+        "goal_lines_total": 0.0,
         "b2b_active": False,
         "game_over": False,
         "last_action": None,
@@ -291,6 +544,23 @@ def _calc_level(start_level, lines_cleared_total, progression="fixed"):
             level += 1
         return max(1, min(15, level))
     return max(1, min(15, start + int(lines_cleared_total // 10)))
+
+
+def _lines_to_next_level(level, lines_total, progression="fixed", start_level=1):
+    if level >= 15:
+        return 0.0
+    if progression == "variable":
+        remaining = float(lines_total)
+        lvl = max(1, min(15, int(start_level)))
+        while lvl < 15 and remaining >= 5 * lvl:
+            remaining -= 5 * lvl
+            lvl += 1
+        if lvl >= 15:
+            return 0.0
+        return max(0.0, float(5 * lvl - remaining))
+    start = max(1, min(15, int(start_level)))
+    lines_into_level = float(lines_total) - float((level - start) * 10)
+    return max(0.0, float(10 - lines_into_level))
 
 
 def _score_action(level, lines_cleared, tspin_type, b2b_active):
@@ -337,6 +607,42 @@ def _score_action(level, lines_cleared, tspin_type, b2b_active):
     return base + bonus, next_b2b
 
 
+def _awarded_goal_lines(lines_cleared, tspin_type, b2b_active):
+    base = 0.0
+    qualifies_b2b = False
+    if tspin_type == "tspin":
+        if lines_cleared == 0:
+            base = 4.0
+        elif lines_cleared == 1:
+            base = 8.0
+            qualifies_b2b = True
+        elif lines_cleared == 2:
+            base = 12.0
+            qualifies_b2b = True
+        elif lines_cleared == 3:
+            base = 16.0
+            qualifies_b2b = True
+    elif tspin_type == "mini":
+        if lines_cleared == 0:
+            base = 1.0
+        else:
+            base = 2.0
+            qualifies_b2b = True
+    else:
+        if lines_cleared == 1:
+            base = 1.0
+        elif lines_cleared == 2:
+            base = 3.0
+        elif lines_cleared == 3:
+            base = 5.0
+        elif lines_cleared == 4:
+            base = 8.0
+            qualifies_b2b = True
+    if qualifies_b2b and b2b_active and base > 0:
+        base += base * 0.5
+    return base
+
+
 def _deserialize_state(state_json, seed, enforce_seed=True):
     if not state_json:
         return _default_state(seed)
@@ -364,6 +670,8 @@ def _deserialize_state(state_json, seed, enforce_seed=True):
         state["score"] = 0
     if "lines_cleared_total" not in state:
         state["lines_cleared_total"] = 0
+    if "goal_lines_total" not in state:
+        state["goal_lines_total"] = float(state.get("lines_cleared_total", 0))
     if "b2b_active" not in state:
         state["b2b_active"] = False
     if "game_over" not in state:
@@ -380,6 +688,12 @@ def _deserialize_state(state_json, seed, enforce_seed=True):
         state["last_rotate_kick"] = None
     if "tspin" not in state:
         state["tspin"] = "none"
+    if "hold_piece_shape" not in state:
+        state["hold_piece_shape"] = None
+    if state.get("hold_piece_shape") not in SHAPES:
+        state["hold_piece_shape"] = None
+    if "hold_used" not in state:
+        state["hold_used"] = False
     return state
 
 
@@ -514,6 +828,7 @@ class TetriNode:
                         "rotate_ccw",
                         "soft_drop",
                         "hard_drop",
+                        "hold",
                         "new",
                     ],
                     {"default": "none"},
@@ -537,13 +852,23 @@ class TetriNode:
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "STRING", "INT", "INT", "IMAGE")
-    RETURN_NAMES = ("image", "state", "lines_cleared", "score", "next_piece")
+    RETURN_TYPES = ("IMAGE", "STRING", "INT", "FLOAT", "FLOAT", "IMAGE", "IMAGE")
+    RETURN_NAMES = ("image", "state", "score", "lines_cleared", "goal", "next_piece", "queue")
     FUNCTION = "step"
     CATEGORY = "games"
 
     def step(self, action, state, seed, block_size, tetrinode_options="", background_image=None):
-        palette = _resolve_colors(tetrinode_options)
+        options = _resolve_options(tetrinode_options)
+        palette = _resolve_colors(options)
+        ghost_enabled = _resolve_bool(options, "ghost_piece", True)
+        grid_enabled = _resolve_bool(options, "grid_enabled", True)
+        grid_default = "rgba(255,255,255,0.08)"
+        grid_color = _parse_rgba_color(options.get("grid_color", grid_default)) if grid_enabled else None
+        queue_size = options.get("queue_size", 6)
+        try:
+            queue_size = max(0, min(6, int(queue_size)))
+        except (TypeError, ValueError):
+            queue_size = 6
         if action == "new":
             state_obj = _default_state(seed)
         else:
@@ -552,25 +877,75 @@ class TetriNode:
 
         if action == "sync":
             state_obj["seed"] = seed
-            image = _render(state_obj["board"], state_obj["piece"], block_size, background_image, palette)
+            image = _render(
+                state_obj["board"],
+                state_obj["piece"],
+                block_size,
+                background_image,
+                palette,
+                ghost_enabled=ghost_enabled,
+                grid_color=grid_color,
+            )
             preview = _render_next_piece(state_obj["next_piece_shape"], block_size, palette)
+            queue = _render_queue(
+                _get_upcoming_shapes(state_obj, queue_size + 1)[1 : queue_size + 1],
+                block_size,
+                palette,
+            )
+            lines_total = (
+                state_obj["goal_lines_total"]
+                if state_obj.get("level_progression") == "variable"
+                else state_obj["lines_cleared_total"]
+            )
             return (
                 image,
                 json.dumps(state_obj),
-                state_obj["lines_cleared_total"],
                 state_obj["score"],
+                lines_total,
+                _lines_to_next_level(
+                    state_obj.get("level", 1),
+                    lines_total,
+                    state_obj.get("level_progression", "fixed"),
+                    state_obj.get("start_level", 1),
+                ),
                 preview,
+                queue,
             )
 
         if state_obj.get("game_over"):
-            image = _render(state_obj["board"], state_obj["piece"], block_size, background_image, palette)
+            image = _render(
+                state_obj["board"],
+                state_obj["piece"],
+                block_size,
+                background_image,
+                palette,
+                ghost_enabled=ghost_enabled,
+                grid_color=grid_color,
+            )
             preview = _render_next_piece(state_obj["next_piece_shape"], block_size, palette)
+            queue = _render_queue(
+                _get_upcoming_shapes(state_obj, queue_size + 1)[1 : queue_size + 1],
+                block_size,
+                palette,
+            )
+            lines_total = (
+                state_obj["goal_lines_total"]
+                if state_obj.get("level_progression") == "variable"
+                else state_obj["lines_cleared_total"]
+            )
             return (
                 image,
                 json.dumps(state_obj),
-                state_obj["lines_cleared_total"],
                 state_obj["score"],
+                lines_total,
+                _lines_to_next_level(
+                    state_obj.get("level", 1),
+                    lines_total,
+                    state_obj.get("level_progression", "fixed"),
+                    state_obj.get("start_level", 1),
+                ),
                 preview,
+                queue,
             )
 
         board = state_obj["board"]
@@ -614,6 +989,22 @@ class TetriNode:
                 moved = _move(piece, 0, 1)
             if drop_distance:
                 state_obj["score"] += 2 * drop_distance
+        elif action == "hold":
+            if not state_obj.get("hold_used", False):
+                hold_shape = state_obj.get("hold_piece_shape")
+                state_obj["hold_used"] = True
+                state_obj["last_action"] = "hold"
+                state_obj["last_rotate_kick"] = None
+                state_obj["tspin"] = "none"
+                if hold_shape in SHAPES:
+                    state_obj["hold_piece_shape"] = piece["shape"]
+                    piece = _spawn_piece(hold_shape)
+                else:
+                    state_obj["hold_piece_shape"] = piece["shape"]
+                    piece = _spawn_piece(next_shape)
+                    next_shape = _pop_shape(state_obj)
+                if _collides(board, piece):
+                    state_obj["game_over"] = True
 
         if action not in {"hard_drop", "down", "soft_drop"}:
             moved = _move(piece, 0, 1)
@@ -628,19 +1019,30 @@ class TetriNode:
                 board, cleared = _clear_lines(board)
                 lines_cleared = cleared
                 level_before = state_obj.get("level", 1)
+                prev_b2b = state_obj.get("b2b_active", False)
                 gained, next_b2b = _score_action(
-                    level_before, cleared, state_obj["tspin"], state_obj.get("b2b_active", False)
+                    level_before, cleared, state_obj["tspin"], prev_b2b
                 )
                 state_obj["score"] += gained
                 state_obj["b2b_active"] = next_b2b
                 state_obj["lines_cleared_total"] += cleared
+                progression = state_obj.get("level_progression", "fixed")
+                if progression == "variable":
+                    state_obj["goal_lines_total"] += _awarded_goal_lines(
+                        cleared,
+                        state_obj["tspin"],
+                        prev_b2b,
+                    )
+                else:
+                    state_obj["goal_lines_total"] = float(state_obj["lines_cleared_total"])
                 state_obj["level"] = _calc_level(
                     state_obj.get("start_level", 1),
-                    state_obj["lines_cleared_total"],
-                    state_obj.get("level_progression", "fixed"),
+                    state_obj["goal_lines_total"],
+                    progression,
                 )
                 piece = _spawn_piece(next_shape)
                 next_shape = _pop_shape(state_obj)
+                state_obj["hold_used"] = False
                 if _collides(board, piece):
                     state_obj["game_over"] = True
         elif action in {"hard_drop", "down", "soft_drop"}:
@@ -653,19 +1055,30 @@ class TetriNode:
                 board, cleared = _clear_lines(board)
                 lines_cleared = cleared
                 level_before = state_obj.get("level", 1)
+                prev_b2b = state_obj.get("b2b_active", False)
                 gained, next_b2b = _score_action(
-                    level_before, cleared, state_obj["tspin"], state_obj.get("b2b_active", False)
+                    level_before, cleared, state_obj["tspin"], prev_b2b
                 )
                 state_obj["score"] += gained
                 state_obj["b2b_active"] = next_b2b
                 state_obj["lines_cleared_total"] += cleared
+                progression = state_obj.get("level_progression", "fixed")
+                if progression == "variable":
+                    state_obj["goal_lines_total"] += _awarded_goal_lines(
+                        cleared,
+                        state_obj["tspin"],
+                        prev_b2b,
+                    )
+                else:
+                    state_obj["goal_lines_total"] = float(state_obj["lines_cleared_total"])
                 state_obj["level"] = _calc_level(
                     state_obj.get("start_level", 1),
-                    state_obj["lines_cleared_total"],
-                    state_obj.get("level_progression", "fixed"),
+                    state_obj["goal_lines_total"],
+                    progression,
                 )
                 piece = _spawn_piece(next_shape)
                 next_shape = _pop_shape(state_obj)
+                state_obj["hold_used"] = False
                 if _collides(board, piece):
                     state_obj["game_over"] = True
 
@@ -673,9 +1086,40 @@ class TetriNode:
         state_obj["piece"] = piece
         state_obj["next_piece_shape"] = next_shape
 
-        image = _render(board, piece, block_size, background_image, palette)
+        image = _render(
+            board,
+            piece,
+            block_size,
+            background_image,
+            palette,
+            ghost_enabled=ghost_enabled,
+            grid_color=grid_color,
+        )
         preview = _render_next_piece(next_shape, block_size, palette)
-        return (image, json.dumps(state_obj), state_obj["lines_cleared_total"], state_obj["score"], preview)
+        queue = _render_queue(
+            _get_upcoming_shapes(state_obj, queue_size + 1)[1 : queue_size + 1],
+            block_size,
+            palette,
+        )
+        lines_out = (
+            state_obj["goal_lines_total"]
+            if state_obj.get("level_progression") == "variable"
+            else state_obj["lines_cleared_total"]
+        )
+        return (
+            image,
+            json.dumps(state_obj),
+            state_obj["score"],
+            lines_out,
+            _lines_to_next_level(
+                state_obj.get("level", 1),
+                lines_out,
+                state_obj.get("level_progression", "fixed"),
+                state_obj.get("start_level", 1),
+            ),
+            preview,
+            queue,
+        )
 
 
 class TetriNodeOptions:
@@ -683,14 +1127,31 @@ class TetriNodeOptions:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "move_left": ("STRING", {"default": "A"}),
-                "move_right": ("STRING", {"default": "D"}),
-                "rotate_cw": ("STRING", {"default": "W"}),
-                "rotate_ccw": ("STRING", {"default": "Q"}),
-                "soft_drop": ("STRING", {"default": "S"}),
-                "hard_drop": ("STRING", {"default": "Space"}),
-                "reset": ("STRING", {"default": "R"}),
-                "pause": ("STRING", {"default": "P"}),
+                "show_controls": ("BOOLEAN", {"default": True}),
+                "move_left": (KEY_OPTIONS, {"default": "ArrowLeft"}),
+                "move_left_2": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad4"}),
+                "move_right": (KEY_OPTIONS, {"default": "ArrowRight"}),
+                "move_right_2": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad6"}),
+                "rotate_cw": (KEY_OPTIONS, {"default": "ArrowUp"}),
+                "rotate_cw_2": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad5"}),
+                "rotate_cw_3": (KEY_OPTIONS_WITH_NONE, {"default": "X"}),
+                "rotate_cw_4": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad1"}),
+                "rotate_cw_5": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad9"}),
+                "rotate_ccw": (KEY_OPTIONS, {"default": "Control"}),
+                "rotate_ccw_2": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad3"}),
+                "rotate_ccw_3": (KEY_OPTIONS_WITH_NONE, {"default": "Z"}),
+                "rotate_ccw_4": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad7"}),
+                "soft_drop": (KEY_OPTIONS, {"default": "ArrowDown"}),
+                "soft_drop_2": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad2"}),
+                "hard_drop": (KEY_OPTIONS, {"default": "Space"}),
+                "hard_drop_2": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad8"}),
+                "hold": (KEY_OPTIONS, {"default": "Shift"}),
+                "hold_2": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad0"}),
+                "hold_3": (KEY_OPTIONS_WITH_NONE, {"default": "C"}),
+                "reset": (KEY_OPTIONS, {"default": "R"}),
+                "reset_2": (KEY_OPTIONS_WITH_NONE, {"default": "None"}),
+                "pause": (KEY_OPTIONS, {"default": "Escape"}),
+                "pause_2": (KEY_OPTIONS_WITH_NONE, {"default": "F1"}),
                 "color_i": ("STRING", {"default": "#55D6FF"}),
                 "color_j": ("STRING", {"default": "#5669FF"}),
                 "color_l": ("STRING", {"default": "#FFA74F"}),
@@ -700,9 +1161,14 @@ class TetriNodeOptions:
                 "color_z": ("STRING", {"default": "#FF7676"}),
                 "background_color": ("STRING", {"default": "#32343E"}),
                 "ghost_piece": ("BOOLEAN", {"default": True}),
+                "next_piece": ("BOOLEAN", {"default": True}),
+                "hold_queue": ("BOOLEAN", {"default": True}),
                 "lock_down_mode": (["extended", "infinite", "classic"], {"default": "extended"}),
                 "start_level": ("INT", {"default": 1, "min": 1, "max": 15}),
                 "level_progression": (["fixed", "variable"], {"default": "fixed"}),
+                "queue_size": ("INT", {"default": 6, "min": 0, "max": 6}),
+                "grid_enabled": ("BOOLEAN", {"default": True}),
+                "grid_color": ("STRING", {"default": "rgba(255,255,255,0.08)"}),
             }
         }
 
@@ -713,17 +1179,37 @@ class TetriNodeOptions:
 
     def build(
         self,
+        show_controls,
         move_left,
+        move_left_2,
         move_right,
+        move_right_2,
         rotate_cw,
+        rotate_cw_2,
+        rotate_cw_3,
+        rotate_cw_4,
+        rotate_cw_5,
         rotate_ccw,
+        rotate_ccw_2,
+        rotate_ccw_3,
+        rotate_ccw_4,
         soft_drop,
+        soft_drop_2,
         hard_drop,
+        hard_drop_2,
+        hold,
+        hold_2,
+        hold_3,
         reset,
+        reset_2,
         pause,
+        pause_2,
         lock_down_mode,
         start_level,
         level_progression,
+        queue_size,
+        grid_enabled,
+        grid_color,
         color_i,
         color_j,
         color_l,
@@ -733,19 +1219,41 @@ class TetriNodeOptions:
         color_z,
         background_color,
         ghost_piece,
+        next_piece,
+        hold_queue,
     ):
         payload = {
+            "show_controls": show_controls,
             "move_left": move_left,
+            "move_left_2": move_left_2,
             "move_right": move_right,
+            "move_right_2": move_right_2,
             "rotate_cw": rotate_cw,
+            "rotate_cw_2": rotate_cw_2,
+            "rotate_cw_3": rotate_cw_3,
+            "rotate_cw_4": rotate_cw_4,
+            "rotate_cw_5": rotate_cw_5,
             "rotate_ccw": rotate_ccw,
+            "rotate_ccw_2": rotate_ccw_2,
+            "rotate_ccw_3": rotate_ccw_3,
+            "rotate_ccw_4": rotate_ccw_4,
             "soft_drop": soft_drop,
+            "soft_drop_2": soft_drop_2,
             "hard_drop": hard_drop,
+            "hard_drop_2": hard_drop_2,
+            "hold": hold,
+            "hold_2": hold_2,
+            "hold_3": hold_3,
             "reset": reset,
+            "reset_2": reset_2,
             "pause": pause,
+            "pause_2": pause_2,
             "lock_down_mode": lock_down_mode,
             "start_level": start_level,
             "level_progression": level_progression,
+            "queue_size": queue_size,
+            "grid_enabled": grid_enabled,
+            "grid_color": grid_color,
             "color_i": color_i,
             "color_j": color_j,
             "color_l": color_l,
@@ -755,5 +1263,7 @@ class TetriNodeOptions:
             "color_z": color_z,
             "background_color": background_color,
             "ghost_piece": ghost_piece,
+            "next_piece": next_piece,
+            "hold_queue": hold_queue,
         }
         return (json.dumps(payload),)
