@@ -19,6 +19,7 @@ const CONTROL_MIN = 110;
 const CENTER_BIAS_X = 24;
 const DAS_MS = 300;
 const ARR_MS = 56;
+const IMAGE_CACHE = new Map();
 
 const COLORS = {
   I: "rgb(85,214,255)",
@@ -171,6 +172,7 @@ function createState(seed, startLevel = 1, levelProgression = "fixed") {
     holdUsed: false,
     board: emptyBoard(),
     score: 0,
+    timeMs: 0,
     lines: 0,
     startLevel: start,
     level,
@@ -489,6 +491,7 @@ function serializeState(state) {
     hold_piece_shape: state.holdShape,
     hold_used: state.holdUsed,
     score: state.score,
+    time_ms: state.timeMs,
     lines_cleared_total: state.lines,
     game_over: state.gameOver,
     tspin: state.tspin,
@@ -683,9 +686,7 @@ function getLayout(node) {
 
   const showHold = getHoldEnabled(node);
   const showNext = getNextPieceEnabled(node);
-  const leftSlots = showHold ? 1 : 0;
-  const rightSlots = 1;
-  const sideSlots = leftSlots + rightSlots;
+  const sideSlots = 2;
 
   let sideW = 120;
   let blockSize = BLOCK;
@@ -699,11 +700,9 @@ function getLayout(node) {
   const boardW = blockSize * GRID_W;
   const boardH = blockSize * GRID_H_VISIBLE;
   const totalW = boardW + sideW * sideSlots + PADDING * sideSlots;
-  const leftPad = leftSlots ? sideW + PADDING : 0;
-  const centerBias = showHold && showNext ? 0 : CENTER_BIAS_X;
-  const boardX = Math.max(PADDING, (node.size[0] - totalW) / 2 + leftPad + centerBias);
-  const boardY = topY;
-  const sideX = boardX + boardW + PADDING;
+  const boardX = Math.max(PADDING, Math.round((node.size[0] - boardW) / 2));
+  const boardY = Math.round(topY);
+  const sideX = Math.round(boardX + boardW + PADDING);
   const sideY = boardY;
 
   node.__tetrisLastLayout = {
@@ -934,6 +933,115 @@ function buildCanvasFromData(value) {
   return canvas;
 }
 
+function buildCanvasFromTensor(value) {
+  if (!value || !value.data || !value.shape) return null;
+  const shape = Array.isArray(value.shape) ? value.shape : null;
+  if (!shape || shape.length < 2) return null;
+  let height = null;
+  let width = null;
+  let channels = null;
+  if (shape.length >= 4) {
+    channels = shape[shape.length - 1];
+    width = shape[shape.length - 2];
+    height = shape[shape.length - 3];
+  } else if (shape.length === 3) {
+    channels = shape[2];
+    width = shape[1];
+    height = shape[0];
+  }
+  if (!width || !height || !channels) return null;
+  if (channels !== 3 && channels !== 4) return null;
+  const frameSize = width * height * channels;
+  let data = value.data;
+  if (Array.isArray(data)) {
+    data = data.slice(0, frameSize);
+  } else if (data && typeof data.subarray === "function" && data.length > frameSize) {
+    data = data.subarray(0, frameSize);
+  }
+  return buildCanvasFromData({ data, width, height });
+}
+
+function getImageInfo(value) {
+  if (!value) return null;
+  if (Array.isArray(value)) return value[0] || null;
+  if (Array.isArray(value.tetrinode_background)) return value.tetrinode_background[0] || null;
+  if (Array.isArray(value.ui?.tetrinode_background)) return value.ui.tetrinode_background[0] || null;
+  if (Array.isArray(value.images)) return value.images[0] || null;
+  if (Array.isArray(value.image)) return value.image[0] || null;
+  if (Array.isArray(value.result)) return value.result[0] || null;
+  return value;
+}
+
+function imageInfoUrl(info) {
+  if (!info) return null;
+  if (typeof info === "string") return info;
+  if (info.url) return info.url;
+  const filename = info.filename || info.name;
+  if (!filename) return null;
+  const type = info.type || "temp";
+  const subfolder = info.subfolder || "";
+  return `./view?filename=${encodeURIComponent(filename)}&type=${encodeURIComponent(type)}&subfolder=${encodeURIComponent(subfolder)}`;
+}
+
+function getImageFromInfo(node, info) {
+  const url = imageInfoUrl(info);
+  if (!url) return null;
+  if (IMAGE_CACHE.has(url)) {
+    return IMAGE_CACHE.get(url);
+  }
+  const img = new Image();
+  img.src = url;
+  img.addEventListener("load", () => {
+    node?.setDirtyCanvas(true, true);
+  });
+  IMAGE_CACHE.set(url, img);
+  return img;
+}
+
+function getLinkedImageInfo(node, name) {
+  const resolved = getInputLink(node, name);
+  if (!resolved) return null;
+  const { origin, link } = resolved;
+  if (!origin) return null;
+  const slot = link?.origin_slot ?? 0;
+  const outputKey = origin.outputs?.[slot]?.name;
+  const outputs = app?.nodeOutputs?.[origin.id] || app?.nodeOutputs?.[`${origin.id}`];
+  if (outputs) {
+    const candidates = [
+      outputKey ? outputs[outputKey] : null,
+      outputs.tetrinode_background,
+      outputs.ui?.tetrinode_background,
+      outputs.images,
+      outputs.image,
+      outputs.result,
+      outputs.output,
+    ];
+    for (const candidate of candidates) {
+      const info = getImageInfo(candidate);
+      if (info) return info;
+    }
+  }
+  const linked = origin.outputs?.[slot]?.links || [];
+  for (const linkId of linked) {
+    const linkInfo = node?.graph?.links?.[linkId];
+    if (!linkInfo) continue;
+    const targetId = linkInfo.target_id;
+    const targetOutputs = app?.nodeOutputs?.[targetId] || app?.nodeOutputs?.[`${targetId}`];
+    if (!targetOutputs) continue;
+    const previewCandidates = [
+      targetOutputs.images,
+      targetOutputs.image,
+      targetOutputs.result,
+      targetOutputs.output,
+    ];
+    for (const candidate of previewCandidates) {
+      const info = getImageInfo(candidate);
+      if (info) return info;
+    }
+  }
+  return null;
+}
+
 function getLinkedImageSource(node, name) {
   const resolved = getInputLink(node, name);
   if (!resolved) return null;
@@ -959,11 +1067,26 @@ function getBackgroundSource(node) {
   const raw = getInputDataByName(node, "background_image");
   let value = Array.isArray(raw) ? raw[0] : raw;
   let source = null;
+  let info = null;
   if (!value) {
     source = getLinkedImageSource(node, "background_image");
     value = source;
   }
-  if (!value && !source) return null;
+  if (!value && !source) {
+    info = getLinkedImageInfo(node, "background_image");
+    if (!info) {
+      const selfOutputs = app?.nodeOutputs?.[node?.id] || app?.nodeOutputs?.[`${node?.id}`];
+      info = getImageInfo(
+        selfOutputs?.tetrinode_background
+        || selfOutputs?.ui?.tetrinode_background
+        || selfOutputs?.images
+        || selfOutputs?.image
+        || selfOutputs?.result,
+      );
+    }
+    if (!info) return null;
+    value = info;
+  }
   if (!node.__tetrisBg) node.__tetrisBg = {};
   if (node.__tetrisBg.value === value && node.__tetrisBg.source) {
     return node.__tetrisBg.source;
@@ -972,7 +1095,15 @@ function getBackgroundSource(node) {
     source = coerceImageSource(value);
   }
   if (!source) {
+    info = info || getImageInfo(value) || getLinkedImageInfo(node, "background_image");
+    if (info) value = info;
+    source = getImageFromInfo(node, info);
+  }
+  if (!source) {
     source = buildCanvasFromData(value);
+  }
+  if (!source) {
+    source = buildCanvasFromTensor(value);
   }
   node.__tetrisBg = { value, source };
   return source || null;
@@ -1013,15 +1144,15 @@ function drawBoardGrid(ctx, boardX, boardY, boardW, boardH, blockSize, color) {
   ctx.strokeStyle = color;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  for (let x = 0; x <= GRID_W; x += 1) {
-    const lineX = boardX + x * blockSize + 0.5;
-    ctx.moveTo(lineX, boardY + 0.5);
-    ctx.lineTo(lineX, boardY + boardH - 0.5);
+  for (let x = 1; x < GRID_W; x += 1) {
+    const lineX = boardX + x * blockSize - 0.5;
+    ctx.moveTo(lineX, boardY - 0.5);
+    ctx.lineTo(lineX, boardY + boardH + 0.5);
   }
-  for (let y = 0; y <= GRID_H_VISIBLE; y += 1) {
-    const lineY = boardY + y * blockSize + 0.5;
-    ctx.moveTo(boardX + 0.5, lineY);
-    ctx.lineTo(boardX + boardW - 0.5, lineY);
+  for (let y = 1; y < GRID_H_VISIBLE; y += 1) {
+    const lineY = boardY + y * blockSize - 0.5;
+    ctx.moveTo(boardX - 0.5, lineY);
+    ctx.lineTo(boardX + boardW + 0.5, lineY);
   }
   ctx.stroke();
 }
@@ -1060,7 +1191,7 @@ function drawNode(node, ctx) {
   }
   ctx.strokeStyle = "rgba(150,150,150,0.8)";
   ctx.lineWidth = 1;
-  ctx.strokeRect(boardX + 0.5, boardY + 0.5, boardW - 1, boardH - 1);
+  ctx.strokeRect(boardX - 0.5, boardY - 0.5, boardW + 1, boardH + 1);
 
   for (let y = 0; y < GRID_H_VISIBLE; y += 1) {
     const boardYIndex = y + HIDDEN_ROWS;
@@ -1108,7 +1239,7 @@ function drawNode(node, ctx) {
   };
   let hudFontSize = Math.max(8, Math.floor(blockSize * 0.5));
   while (hudFontSize > 8) {
-    if (measureFits(hudFontSize, ["Lines:", "Score:", "Level:", "Goal:"], maxWidthLeft)) break;
+    if (measureFits(hudFontSize, ["Lines:", "Score:", "Time:", "Level:", "Goal:"], maxWidthLeft)) break;
     hudFontSize -= 1;
   }
   const scoreFontSize = Math.max(7, hudFontSize - 1);
@@ -1122,7 +1253,9 @@ function drawNode(node, ctx) {
   const leftHudTopY = showHold ? nextBoxY + previewBox + PADDING * 1.2 : sideY;
   const scoreLabelY = leftHudTopY + scoreFontSize + 1;
   const scoreValueY = scoreLabelY + scoreFontSize + 2;
-  const linesLabelY = scoreValueY + lineGap + scoreFontSize;
+  const timeLabelY = scoreValueY + lineGap + scoreFontSize;
+  const timeValueY = timeLabelY + scoreFontSize + 2;
+  const linesLabelY = timeValueY + lineGap + scoreFontSize + 6;
   const linesValueY = linesLabelY;
   const levelLabelY = linesLabelY + lineGap + scoreFontSize;
   const levelValueY = levelLabelY;
@@ -1131,6 +1264,7 @@ function drawNode(node, ctx) {
   ctx.font = `bold ${scoreFontSize}px sans-serif`;
   ctx.textAlign = "left";
   ctx.fillText("Score:", leftX, scoreLabelY);
+  ctx.fillText("Time:", leftX, timeLabelY);
   ctx.fillText("Lines:", leftX, linesLabelY);
   ctx.fillText("Level:", leftX, levelLabelY);
   ctx.fillText("Goal:", leftX, goalLabelY);
@@ -1148,6 +1282,7 @@ function drawNode(node, ctx) {
   const valueX = leftX + previewBox - 2;
   ctx.textAlign = "right";
   ctx.fillText(`${state.score}`, valueX, scoreValueY);
+  ctx.fillText(formatTimeMs(state.timeMs), valueX, timeValueY);
   ctx.fillText(linesText, valueX, linesValueY);
   ctx.fillText(`${state.level}`, valueX, levelValueY);
   ctx.fillText(remainingText, valueX, goalValueY);
@@ -1241,8 +1376,8 @@ function drawNode(node, ctx) {
     const shapeH = maxY - minY + 1;
     const areaW = previewBox - innerPad * 2;
     const contentH = Math.max(0, areaH - innerPad * 2);
-    const offX = Math.floor((areaW - shapeW * cellSize) / 2);
-    const offY = Math.floor((contentH - shapeH * cellSize) / 2);
+    const offX = Math.round((areaW - shapeW * cellSize) / 2);
+    const offY = Math.round((contentH - shapeH * cellSize) / 2);
     for (const [px, py] of preview) {
       const gx = px - minX;
       const gy = py - minY;
@@ -1563,10 +1698,17 @@ function ensureTimer(node) {
   const live = node.__tetrisLive;
   if (!live || live.state.timer) return;
   live.state.timer = setInterval(() => {
+    if (live.state.running && live.state.started && !live.state.gameOver && !isNodeSelected(node)) {
+      live.state.running = false;
+      updateBackendState(node);
+      node.setDirtyCanvas(true, true);
+      return;
+    }
     if (!live.state.running || live.state.gameOver) return;
     const lockMode = getLockMode(node);
     updateAutoRepeat(live.state, node, 50);
     live.state.elapsed += 50;
+    live.state.timeMs += 50;
     if (live.state.locking) {
       if (lockMode === "extended" && live.state.lockMoves >= 15) {
         settlePiece(live.state);
@@ -1627,6 +1769,15 @@ function getSelectedLiveNode(allowFallback = false) {
     if (node?.comfyClass === NODE_CLASS && node.__tetrisLive) return node;
   }
   return fallback;
+}
+
+function isNodeSelected(node) {
+  const selected = app.canvas?.selected_nodes;
+  if (!selected) return false;
+  for (const key of Object.keys(selected)) {
+    if (selected[key] === node) return true;
+  }
+  return false;
 }
 
 function handleKey(event) {
@@ -1984,13 +2135,17 @@ function getControlBindings(node) {
     hold2: "numpad0",
     hold3: "c",
     reset: "r",
-    reset2: null,
+    reset2: "none",
     pause: "escape",
     pause2: "f1",
   };
   if (!node) return defaultBindings;
+  const linked = getLinkedOptionsNode(node);
+  if (!linked) return defaultBindings;
   const normalizeKey = (value) => {
-    const raw = `${value}`.trim().toLowerCase();
+    const rawValue = `${value}`;
+    if (rawValue === " ") return " ";
+    const raw = rawValue.trim().toLowerCase();
     if (!raw) return raw;
     if (raw === "space" || raw === "spacebar") return " ";
     if (raw === "backslash") return "\\";
@@ -2002,7 +2157,6 @@ function getControlBindings(node) {
     if (raw === "none") return null;
     return raw;
   };
-  const linked = getLinkedOptionsNode(node);
   const lookup = (name, fallback) => {
     if (linked?.widgets) {
       const widget = linked.widgets.find((w) => w.name === name);
@@ -2021,32 +2175,32 @@ function getControlBindings(node) {
     return normalizeKey(fallback);
   };
   const primary = (name, fallback) => lookup(name, fallback);
-  const secondary = (name) => lookup(name, null);
+  const secondary = (name, fallback) => lookup(name, fallback);
   return {
     moveLeft: primary("move_left", defaultBindings.moveLeft),
-    moveLeft2: secondary("move_left_2"),
+    moveLeft2: secondary("move_left_2", defaultBindings.moveLeft2),
     moveRight: primary("move_right", defaultBindings.moveRight),
-    moveRight2: secondary("move_right_2"),
+    moveRight2: secondary("move_right_2", defaultBindings.moveRight2),
     rotateCw: primary("rotate_cw", defaultBindings.rotateCw),
-    rotateCw2: secondary("rotate_cw_2"),
+    rotateCw2: secondary("rotate_cw_2", defaultBindings.rotateCw2),
     rotateCw3: primary("rotate_cw_3", defaultBindings.rotateCw3),
     rotateCw4: primary("rotate_cw_4", defaultBindings.rotateCw4),
     rotateCw5: primary("rotate_cw_5", defaultBindings.rotateCw5),
     rotateCcw: primary("rotate_ccw", defaultBindings.rotateCcw),
-    rotateCcw2: secondary("rotate_ccw_2"),
+    rotateCcw2: secondary("rotate_ccw_2", defaultBindings.rotateCcw2),
     rotateCcw3: primary("rotate_ccw_3", defaultBindings.rotateCcw3),
     rotateCcw4: primary("rotate_ccw_4", defaultBindings.rotateCcw4),
     softDrop: primary("soft_drop", defaultBindings.softDrop),
-    softDrop2: secondary("soft_drop_2"),
+    softDrop2: secondary("soft_drop_2", defaultBindings.softDrop2),
     hardDrop: primary("hard_drop", defaultBindings.hardDrop),
-    hardDrop2: secondary("hard_drop_2"),
+    hardDrop2: secondary("hard_drop_2", defaultBindings.hardDrop2),
     hold: primary("hold", defaultBindings.hold),
-    hold2: secondary("hold_2"),
+    hold2: secondary("hold_2", defaultBindings.hold2),
     hold3: primary("hold_3", defaultBindings.hold3),
     reset: primary("reset", defaultBindings.reset),
-    reset2: secondary("reset_2"),
+    reset2: secondary("reset_2", defaultBindings.reset2),
     pause: primary("pause", defaultBindings.pause),
-    pause2: secondary("pause_2"),
+    pause2: secondary("pause_2", defaultBindings.pause2),
   };
 }
 
@@ -2122,7 +2276,7 @@ function getGridColor(node) {
     const parsed = parseRgbaColor(widget?.value);
     if (parsed) return parsed;
   }
-  return "rgba(255,255,255,0.08)";
+  return "rgba(255,255,255,0.2)";
 }
 
 function formatKeyLabel(value) {
@@ -2151,6 +2305,17 @@ function formatKeyLabel(value) {
     return value.replace("numpad", "Num");
   }
   return value.toUpperCase();
+}
+
+function formatTimeMs(ms) {
+  const total = Math.max(0, Math.floor(ms || 0));
+  const minutes = Math.floor(total / 60000);
+  const seconds = Math.floor((total % 60000) / 1000);
+  const centis = Math.floor((total % 1000) / 10);
+  const mm = `${minutes}`.padStart(2, "0");
+  const ss = `${seconds}`.padStart(2, "0");
+  const cc = `${centis}`.padStart(2, "0");
+  return `${mm}:${ss}.${cc}`;
 }
 
 function formatKeyList(values) {

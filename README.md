@@ -4,14 +4,17 @@
   <img src="docs/images/banner.png" width="50%">
 </p>
 
-A ComfyUI custom node pack that embeds a playable Tetris game inside a node UI, with image outputs for the live board and next-piece preview.
+A ComfyUI custom node pack that embeds a playable Tetris game inside a node UI, with image outputs for the live board, next-piece preview, and queue.
 
 ## Features
 
 - Live, playable Tetris inside the node UI
-- Board image output and next-piece image output
-- Guideline-based scoring (lines, T-Spins, drops, and back-to-back bonuses)
-- Level progression with guideline fall speeds
+- Board, next-piece, and queue image outputs
+- Hold queue, next piece, and configurable queue display
+- Optional background image (scaled to cover, center-cropped)
+- Optional ghost piece and playfield grid (optional)
+- Official Tetris Guideline-based scoring (lines, T-Spins, drops, and back-to-back bonuses)
+- Level progression with official fall speeds
 - Pause/Play and Reset controls
 - Seeded piece generation with a standard seed widget available
 - Optional keybinding configuration via `TetriNode Options` node
@@ -25,7 +28,7 @@ Main gameplay node.
 ![TetriNode node UI](docs/images/tetrinode.png)
 
 **Inputs**
-- `tetrinode_options` (TETRINODE_OPTIONS): Custom keybindings for moving left/right, rotating the piece, soft/hard drop, play/pause, and reset
+- `tetrinode_options` (TETRINODE_OPTIONS): Custom keybindings, colors, and gameplay options
 - `seed` (INT): Seed used for piece sequence
 - `background_image` (IMAGE, optional): Background image for the game board (scaled to cover, then center-cropped)
 
@@ -36,6 +39,7 @@ Main gameplay node.
 - `lines_cleared` (FLOAT): total or awarded line clears (variable goal system)
 - `goal` (FLOAT): lines needed to reach the next level
 - `next_piece` (IMAGE): preview image
+- `queue` (IMAGE): queue preview image
 
 ### TetriNode Options
 
@@ -45,15 +49,19 @@ Optional node that provides keybindings.
 
 **Inputs**
 
-- `move_left`, `move_right`, `rotate_cw`, `rotate_ccw`, `soft_drop`, `hard_drop`, `reset`, `pause`: Primary key bindings (dropdowns)
-- `move_left_2`, `move_right_2`, `rotate_cw_2`, `rotate_ccw_2`, `soft_drop_2`, `hard_drop_2`, `reset_2`, `pause_2`: Secondary key bindings (optional)
+- `show_controls`: Toggle the controls table (default: on)
+- Key bindings (dropdowns): `move_left`, `move_left_2`, `move_right`, `move_right_2`, `rotate_cw`, `rotate_cw_2`, `rotate_cw_3`, `rotate_cw_4`, `rotate_cw_5`, `rotate_ccw`, `rotate_ccw_2`, `rotate_ccw_3`, `rotate_ccw_4`, `soft_drop`, `soft_drop_2`, `hard_drop`, `hard_drop_2`, `hold`, `hold_2`, `hold_3`, `reset`, `reset_2`, `pause`, `pause_2`
 - `color_i`, `color_j`, `color_l`, `color_o`, `color_s`, `color_t`, `color_z`: Hex colors for each tetromino (e.g. `#55D6FF`)
 - `background_color`: Hex color for the board background (ignored when a background image is connected)
 - `ghost_piece`: Toggle for the ghost piece (default: on)
+- `next_piece`: Toggle next piece display (default: on)
+- `hold_queue`: Toggle hold queue display (default: on)
 - `lock_down_mode`: Lock down behavior (`extended`, `infinite`, `classic`, default: `extended`)
 - `start_level`: Starting level (1-15, default: 1)
 - `level_progression`: Level goal system (`fixed` or `variable`, default: `fixed`)
 - `queue_size`: Number of queue pieces to display (0-6, default: 6)
+- `grid_enabled`: Toggle playfield grid (default: on)
+- `grid_color`: RGBA grid color (default: `rgba(255,255,255,0.2)`)
 
 **Outputs**
 
@@ -63,18 +71,19 @@ Optional node that provides keybindings.
 
 Displayed inside the node UI and reflected in the game input handler.
 
-- Move Left: `A`
-- Move Right: `D`
-- Rotate CW: `W`
-- Rotate CCW: `Q`
-- Soft Drop: `S`
-- Hard Drop: `Space`
+- Move Left: `ArrowLeft` / `Numpad4`
+- Move Right: `ArrowRight` / `Numpad6`
+- Rotate CW: `ArrowUp` / `Numpad5` / `X` / `Numpad1` / `Numpad9`
+- Rotate CCW: `Ctrl` / `Numpad3` / `Z` / `Numpad7`
+- Soft Drop: `ArrowDown` / `Numpad2`
+- Hard Drop: `Space` / `Numpad8`
+- Hold: `Shift` / `Numpad0` / `C`
 - Reset: `R`
-- Pause: `P`
+- Pause: `Esc` / `F1`
 
 ## Scoring
 
-Scoring follows the 2009 Tetris Design Guideline.
+Scoring follows the Official 2009 Tetris Design Guideline.
 
 **Line clears (× Level)**
 - Single: 100
@@ -139,13 +148,13 @@ Levels are capped at 15 and drive normal fall speed.
 - Level 13: 0.018
 - Level 14: 0.011
 - Level 15: 0.007
+
 ## Installation
 
 ### Installation (preferred)
 
 Install via ComfyUI Manager. Search for "TetriNode" and click install.
 The node pack is also available on the Comfy Registry site by [clicking here](https://registry.comfy.org/publishers/soulctcher/nodes/TetriNode).
-
 
 ### Installation (alternative)
 

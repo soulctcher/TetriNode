@@ -1,10 +1,12 @@
 import json
+import os
 import random
 import re
 
 import numpy as np
 import torch
 from PIL import Image, ImageDraw
+import folder_paths
 
 
 BOARD_WIDTH = 10
@@ -14,6 +16,7 @@ HIDDEN_ROWS = BOARD_HEIGHT - VISIBLE_HEIGHT
 SPAWN_Y = HIDDEN_ROWS - 2
 STATE_VERSION = 1
 PREVIEW_GRID = 4
+OUTPUT_SCALE = 3
 
 SHAPES = {
     "I": [
@@ -244,6 +247,37 @@ def _prepare_background(background_image, width, height):
     return pil.crop((left, top, left + width, top + height))
 
 
+def _save_temp_background(background_image, prefix="TetriNode_bg"):
+    if background_image is None:
+        return []
+    try:
+        img = background_image[0].detach().cpu().numpy()
+    except Exception:
+        return []
+    if img.ndim != 3 or img.shape[-1] < 3:
+        return []
+    img = np.clip(img[..., :3] * 255.0, 0, 255).astype(np.uint8)
+    pil = Image.fromarray(img, "RGB")
+    width, height = pil.size
+    temp_dir = folder_paths.get_temp_directory()
+    suffix = "".join(random.choice("abcdefghijklmnopqrstupvxyz") for _ in range(5))
+    filename_prefix = f"{prefix}_{suffix}"
+    full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
+        filename_prefix, temp_dir, width, height
+    )
+    file = f"{filename}_{counter:05}_.png"
+    os.makedirs(full_output_folder, exist_ok=True)
+    pil.save(os.path.join(full_output_folder, file), compress_level=1)
+    return [{"filename": file, "subfolder": subfolder, "type": "temp"}]
+
+
+def _wrap_result(result, background_image):
+    ui_images = _save_temp_background(background_image)
+    if not ui_images:
+        return result
+    return {"ui": {"tetrinode_background": ui_images}, "result": result}
+
+
 def _parse_hex_color(value):
     if not isinstance(value, str):
         return None
@@ -351,12 +385,12 @@ def _draw_grid(img, block_size, width, height, color):
         return img
     overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-    for x in range(BOARD_WIDTH + 1):
-        xpos = x * block_size
-        draw.line([xpos, 0, xpos, height], fill=color, width=1)
-    for y in range(VISIBLE_HEIGHT + 1):
-        ypos = y * block_size
-        draw.line([0, ypos, width, ypos], fill=color, width=1)
+    for x in range(1, BOARD_WIDTH):
+        xpos = x * block_size - 1
+        draw.line([xpos, -1, xpos, height + 1], fill=color, width=1)
+    for y in range(1, VISIBLE_HEIGHT):
+        ypos = y * block_size - 1
+        draw.line([-1, ypos, width + 1, ypos], fill=color, width=1)
     return Image.alpha_composite(img, overlay)
 
 
@@ -367,13 +401,13 @@ def _draw_ghost(img, board, piece, block_size, color):
     draw = ImageDraw.Draw(overlay)
     ghost = _ghost_piece(board, piece)
     fill = (*color, 84)
-    outline = (*color, 171)
+    outline = (200, 200, 200, 171)
     for x, y in _piece_cells(ghost):
         if HIDDEN_ROWS <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
             x0 = x * block_size
             y0 = (y - HIDDEN_ROWS) * block_size
             draw.rectangle(
-                [x0, y0, x0 + block_size - 2, y0 + block_size - 2],
+                [x0, y0, x0 + block_size - 1, y0 + block_size - 1],
                 fill=fill,
             )
             draw.rectangle(
@@ -403,7 +437,7 @@ def _render(board, piece, block_size, background_image=None, colors=None, ghost_
                 color = palette[cell]
                 x0 = x * block_size
                 y0 = y * block_size
-                draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=color)
+                draw.rectangle([x0, y0, x0 + block_size - 1, y0 + block_size - 1], fill=color)
 
     if ghost_enabled:
         img = _draw_ghost(img, board, piece, block_size, palette[piece["shape"]])
@@ -414,7 +448,7 @@ def _render(board, piece, block_size, background_image=None, colors=None, ghost_
             color = palette[piece["shape"]]
             x0 = x * block_size
             y0 = (y - HIDDEN_ROWS) * block_size
-            draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=color)
+            draw.rectangle([x0, y0, x0 + block_size - 1, y0 + block_size - 1], fill=color)
 
     arr = np.array(img.convert("RGB")).astype(np.float32) / 255.0
     return torch.from_numpy(arr)[None, ...]
@@ -443,7 +477,7 @@ def _render_next_piece(shape, block_size, colors=None):
         if 0 <= gx < grid and 0 <= gy < grid:
             x0 = gx * block_size
             y0 = gy * block_size
-            draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=palette[shape])
+            draw.rectangle([x0, y0, x0 + block_size - 1, y0 + block_size - 1], fill=palette[shape])
 
     arr = np.array(img).astype(np.float32) / 255.0
     return torch.from_numpy(arr)[None, ...]
@@ -494,7 +528,7 @@ def _render_queue(shapes, block_size, colors=None):
                 x0 = gx * block_size
                 y0 = offset_y + gy * block_size
                 draw.rectangle(
-                    [x0, y0, x0 + block_size - 2, y0 + block_size - 2],
+                    [x0, y0, x0 + block_size - 1, y0 + block_size - 1],
                     fill=palette[shape],
                 )
     arr = np.array(img).astype(np.float32) / 255.0
@@ -813,6 +847,7 @@ def _tspin_type(board, piece, last_action, last_rotate_kick):
 
 
 class TetriNode:
+    OUTPUT_NODE = True
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -877,19 +912,20 @@ class TetriNode:
 
         if action == "sync":
             state_obj["seed"] = seed
+            output_block = block_size * OUTPUT_SCALE
             image = _render(
                 state_obj["board"],
                 state_obj["piece"],
-                block_size,
+                output_block,
                 background_image,
                 palette,
                 ghost_enabled=ghost_enabled,
                 grid_color=grid_color,
             )
-            preview = _render_next_piece(state_obj["next_piece_shape"], block_size, palette)
+            preview = _render_next_piece(state_obj["next_piece_shape"], output_block, palette)
             queue = _render_queue(
                 _get_upcoming_shapes(state_obj, queue_size + 1)[1 : queue_size + 1],
-                block_size,
+                output_block,
                 palette,
             )
             lines_total = (
@@ -897,35 +933,39 @@ class TetriNode:
                 if state_obj.get("level_progression") == "variable"
                 else state_obj["lines_cleared_total"]
             )
-            return (
-                image,
-                json.dumps(state_obj),
-                state_obj["score"],
-                lines_total,
-                _lines_to_next_level(
-                    state_obj.get("level", 1),
+            return _wrap_result(
+                (
+                    image,
+                    json.dumps(state_obj),
+                    state_obj["score"],
                     lines_total,
-                    state_obj.get("level_progression", "fixed"),
-                    state_obj.get("start_level", 1),
+                    _lines_to_next_level(
+                        state_obj.get("level", 1),
+                        lines_total,
+                        state_obj.get("level_progression", "fixed"),
+                        state_obj.get("start_level", 1),
+                    ),
+                    preview,
+                    queue,
                 ),
-                preview,
-                queue,
+                background_image,
             )
 
         if state_obj.get("game_over"):
+            output_block = block_size * OUTPUT_SCALE
             image = _render(
                 state_obj["board"],
                 state_obj["piece"],
-                block_size,
+                output_block,
                 background_image,
                 palette,
                 ghost_enabled=ghost_enabled,
                 grid_color=grid_color,
             )
-            preview = _render_next_piece(state_obj["next_piece_shape"], block_size, palette)
+            preview = _render_next_piece(state_obj["next_piece_shape"], output_block, palette)
             queue = _render_queue(
                 _get_upcoming_shapes(state_obj, queue_size + 1)[1 : queue_size + 1],
-                block_size,
+                output_block,
                 palette,
             )
             lines_total = (
@@ -933,19 +973,22 @@ class TetriNode:
                 if state_obj.get("level_progression") == "variable"
                 else state_obj["lines_cleared_total"]
             )
-            return (
-                image,
-                json.dumps(state_obj),
-                state_obj["score"],
-                lines_total,
-                _lines_to_next_level(
-                    state_obj.get("level", 1),
+            return _wrap_result(
+                (
+                    image,
+                    json.dumps(state_obj),
+                    state_obj["score"],
                     lines_total,
-                    state_obj.get("level_progression", "fixed"),
-                    state_obj.get("start_level", 1),
+                    _lines_to_next_level(
+                        state_obj.get("level", 1),
+                        lines_total,
+                        state_obj.get("level_progression", "fixed"),
+                        state_obj.get("start_level", 1),
+                    ),
+                    preview,
+                    queue,
                 ),
-                preview,
-                queue,
+                background_image,
             )
 
         board = state_obj["board"]
@@ -1086,19 +1129,20 @@ class TetriNode:
         state_obj["piece"] = piece
         state_obj["next_piece_shape"] = next_shape
 
+        output_block = block_size * OUTPUT_SCALE
         image = _render(
             board,
             piece,
-            block_size,
+            output_block,
             background_image,
             palette,
             ghost_enabled=ghost_enabled,
             grid_color=grid_color,
         )
-        preview = _render_next_piece(next_shape, block_size, palette)
+        preview = _render_next_piece(next_shape, output_block, palette)
         queue = _render_queue(
             _get_upcoming_shapes(state_obj, queue_size + 1)[1 : queue_size + 1],
-            block_size,
+            output_block,
             palette,
         )
         lines_out = (
@@ -1106,19 +1150,22 @@ class TetriNode:
             if state_obj.get("level_progression") == "variable"
             else state_obj["lines_cleared_total"]
         )
-        return (
-            image,
-            json.dumps(state_obj),
-            state_obj["score"],
-            lines_out,
-            _lines_to_next_level(
-                state_obj.get("level", 1),
+        return _wrap_result(
+            (
+                image,
+                json.dumps(state_obj),
+                state_obj["score"],
                 lines_out,
-                state_obj.get("level_progression", "fixed"),
-                state_obj.get("start_level", 1),
+                _lines_to_next_level(
+                    state_obj.get("level", 1),
+                    lines_out,
+                    state_obj.get("level_progression", "fixed"),
+                    state_obj.get("start_level", 1),
+                ),
+                preview,
+                queue,
             ),
-            preview,
-            queue,
+            background_image,
         )
 
 
@@ -1168,7 +1215,7 @@ class TetriNodeOptions:
                 "level_progression": (["fixed", "variable"], {"default": "fixed"}),
                 "queue_size": ("INT", {"default": 6, "min": 0, "max": 6}),
                 "grid_enabled": ("BOOLEAN", {"default": True}),
-                "grid_color": ("STRING", {"default": "rgba(255,255,255,0.08)"}),
+                "grid_color": ("STRING", {"default": "rgba(255,255,255,0.2)"}),
             }
         }
 
