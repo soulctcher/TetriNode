@@ -2,6 +2,8 @@ __pycache__/
 .comfyui_test/
 .ruff_cache/
 .venv/
+.tspin_venv/
+.tmp_tspin_pages/
 knowledge-library/
 skills/
 tests/

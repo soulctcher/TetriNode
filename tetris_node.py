@@ -17,6 +17,7 @@ SPAWN_Y = HIDDEN_ROWS - 2
 STATE_VERSION = 1
 PREVIEW_GRID = 4
 OUTPUT_SCALE = 3
+EXTRA_VISIBLE_ROWS = 1 / 3
 
 SHAPES = {
     "I": [
@@ -380,7 +381,7 @@ def _ghost_piece(board, piece):
     return ghost
 
 
-def _draw_grid(img, block_size, width, height, color):
+def _draw_grid(img, block_size, width, height, color, extra_px):
     if not color:
         return img
     overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
@@ -388,13 +389,13 @@ def _draw_grid(img, block_size, width, height, color):
     for x in range(1, BOARD_WIDTH):
         xpos = x * block_size - 1
         draw.line([xpos, -1, xpos, height + 1], fill=color, width=1)
-    for y in range(1, VISIBLE_HEIGHT):
-        ypos = y * block_size - 1
+    for y in range(0, VISIBLE_HEIGHT):
+        ypos = y * block_size - 1 + extra_px
         draw.line([-1, ypos, width + 1, ypos], fill=color, width=1)
     return Image.alpha_composite(img, overlay)
 
 
-def _draw_ghost(img, board, piece, block_size, color):
+def _draw_ghost(img, board, piece, block_size, color, extra_px):
     if not color:
         return img
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
@@ -403,11 +404,11 @@ def _draw_ghost(img, board, piece, block_size, color):
     fill = (*color, 84)
     outline = (200, 200, 200, 171)
     for x, y in _piece_cells(ghost):
-        if HIDDEN_ROWS <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
+        if HIDDEN_ROWS - 1 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
             x0 = x * block_size
-            y0 = (y - HIDDEN_ROWS) * block_size
+            y0 = (y - HIDDEN_ROWS) * block_size + extra_px
             draw.rectangle(
-                [x0, y0, x0 + block_size - 1, y0 + block_size - 1],
+                [x0, y0, x0 + block_size - 2, y0 + block_size - 2],
                 fill=fill,
             )
             draw.rectangle(
@@ -419,16 +420,26 @@ def _draw_ghost(img, board, piece, block_size, color):
 
 def _render(board, piece, block_size, background_image=None, colors=None, ghost_enabled=False, grid_color=None):
     width = BOARD_WIDTH * block_size
-    height = VISIBLE_HEIGHT * block_size
+    extra_px = int(round(EXTRA_VISIBLE_ROWS * block_size))
+    height = VISIBLE_HEIGHT * block_size + extra_px
     palette = colors or COLORS
     bg = _prepare_background(background_image, width, height)
     if bg is not None:
         img = bg.convert("RGBA")
     else:
         img = Image.new("RGBA", (width, height), (*palette["X"], 255))
-    img = _draw_grid(img, block_size, width, height, grid_color)
+    img = _draw_grid(img, block_size, width, height, grid_color, extra_px)
     draw = ImageDraw.Draw(img)
 
+    if HIDDEN_ROWS > 0:
+        hidden_row = HIDDEN_ROWS - 1
+        for x in range(BOARD_WIDTH):
+            cell = board[hidden_row][x]
+            if cell:
+                color = palette[cell]
+                x0 = x * block_size
+                y0 = -block_size + extra_px
+                draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=color)
     for y in range(VISIBLE_HEIGHT):
         board_y = y + HIDDEN_ROWS
         for x in range(BOARD_WIDTH):
@@ -436,19 +447,19 @@ def _render(board, piece, block_size, background_image=None, colors=None, ghost_
             if cell:
                 color = palette[cell]
                 x0 = x * block_size
-                y0 = y * block_size
-                draw.rectangle([x0, y0, x0 + block_size - 1, y0 + block_size - 1], fill=color)
+                y0 = y * block_size + extra_px
+                draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=color)
 
     if ghost_enabled:
-        img = _draw_ghost(img, board, piece, block_size, palette[piece["shape"]])
+        img = _draw_ghost(img, board, piece, block_size, palette[piece["shape"]], extra_px)
         draw = ImageDraw.Draw(img)
 
     for x, y in _piece_cells(piece):
-        if HIDDEN_ROWS <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
+        if HIDDEN_ROWS - 1 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
             color = palette[piece["shape"]]
             x0 = x * block_size
-            y0 = (y - HIDDEN_ROWS) * block_size
-            draw.rectangle([x0, y0, x0 + block_size - 1, y0 + block_size - 1], fill=color)
+            y0 = (y - HIDDEN_ROWS) * block_size + extra_px
+            draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=color)
 
     arr = np.array(img.convert("RGB")).astype(np.float32) / 255.0
     return torch.from_numpy(arr)[None, ...]
@@ -477,7 +488,7 @@ def _render_next_piece(shape, block_size, colors=None):
         if 0 <= gx < grid and 0 <= gy < grid:
             x0 = gx * block_size
             y0 = gy * block_size
-            draw.rectangle([x0, y0, x0 + block_size - 1, y0 + block_size - 1], fill=palette[shape])
+            draw.rectangle([x0, y0, x0 + block_size - 2, y0 + block_size - 2], fill=palette[shape])
 
     arr = np.array(img).astype(np.float32) / 255.0
     return torch.from_numpy(arr)[None, ...]
@@ -528,7 +539,7 @@ def _render_queue(shapes, block_size, colors=None):
                 x0 = gx * block_size
                 y0 = offset_y + gy * block_size
                 draw.rectangle(
-                    [x0, y0, x0 + block_size - 1, y0 + block_size - 1],
+                    [x0, y0, x0 + block_size - 2, y0 + block_size - 2],
                     fill=palette[shape],
                 )
     arr = np.array(img).astype(np.float32) / 255.0
@@ -551,6 +562,10 @@ def _default_state(seed):
         "hold_used": False,
         "score": 0,
         "lines_cleared_total": 0,
+        "tetrises": 0,
+        "tspins": 0,
+        "combo_streak": 0,
+        "combo_total": 0,
         "goal_lines_total": 0.0,
         "b2b_active": False,
         "game_over": False,
@@ -677,6 +692,19 @@ def _awarded_goal_lines(lines_cleared, tspin_type, b2b_active):
     return base
 
 
+def _update_stats(state, lines_cleared):
+    if lines_cleared > 0:
+        state["combo_streak"] = state.get("combo_streak", 0) + 1
+        if state["combo_streak"] == 2:
+            state["combo_total"] = state.get("combo_total", 0) + 1
+        if lines_cleared == 4:
+            state["tetrises"] = state.get("tetrises", 0) + 1
+        if state.get("tspin") != "none":
+            state["tspins"] = state.get("tspins", 0) + 1
+    else:
+        state["combo_streak"] = 0
+
+
 def _deserialize_state(state_json, seed, enforce_seed=True):
     if not state_json:
         return _default_state(seed)
@@ -704,6 +732,14 @@ def _deserialize_state(state_json, seed, enforce_seed=True):
         state["score"] = 0
     if "lines_cleared_total" not in state:
         state["lines_cleared_total"] = 0
+    if "tetrises" not in state:
+        state["tetrises"] = 0
+    if "tspins" not in state:
+        state["tspins"] = 0
+    if "combo_streak" not in state:
+        state["combo_streak"] = 0
+    if "combo_total" not in state:
+        state["combo_total"] = 0
     if "goal_lines_total" not in state:
         state["goal_lines_total"] = float(state.get("lines_cleared_total", 0))
     if "b2b_active" not in state:
@@ -834,10 +870,12 @@ def _tspin_type(board, piece, last_action, last_rotate_kick):
         back = ("B", "D")
     front_hits = sum(_corner_occupied(board, *corners[k]) for k in front)
     back_hits = sum(_corner_occupied(board, *corners[k]) for k in back)
+    if last_rotate_kick == 4:
+        return "tspin"
     total_hits = front_hits + back_hits
     if total_hits < 3:
         return "none"
-    if last_rotate_kick == 4:
+    if front_hits == 2 and back_hits == 2:
         return "tspin"
     if front_hits == 2 and back_hits >= 1:
         return "tspin"
@@ -884,15 +922,25 @@ class TetriNode:
             "optional": {
                 "tetrinode_options": ("TETRINODE_OPTIONS",),
                 "background_image": ("IMAGE",),
+                "state_in": ("STRING", {"default": "", "forceInput": True}),
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "STRING", "INT", "FLOAT", "FLOAT", "IMAGE", "IMAGE")
-    RETURN_NAMES = ("image", "state", "score", "lines_cleared", "goal", "next_piece", "queue")
+    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "STRING")
+    RETURN_NAMES = ("matrix", "next_piece", "queue", "state")
     FUNCTION = "step"
     CATEGORY = "games"
 
-    def step(self, action, state, seed, block_size, tetrinode_options="", background_image=None):
+    def step(
+        self,
+        action,
+        state,
+        seed,
+        block_size,
+        tetrinode_options="",
+        background_image=None,
+        state_in="",
+    ):
         options = _resolve_options(tetrinode_options)
         palette = _resolve_colors(options)
         ghost_enabled = _resolve_bool(options, "ghost_piece", True)
@@ -904,11 +952,12 @@ class TetriNode:
             queue_size = max(0, min(6, int(queue_size)))
         except (TypeError, ValueError):
             queue_size = 6
+        state_override = state_in if isinstance(state_in, str) and state_in.strip() else state
         if action == "new":
             state_obj = _default_state(seed)
         else:
             enforce_seed = action != "sync"
-            state_obj = _deserialize_state(state, seed, enforce_seed=enforce_seed)
+            state_obj = _deserialize_state(state_override, seed, enforce_seed=enforce_seed)
 
         if action == "sync":
             state_obj["seed"] = seed
@@ -936,17 +985,9 @@ class TetriNode:
             return _wrap_result(
                 (
                     image,
-                    json.dumps(state_obj),
-                    state_obj["score"],
-                    lines_total,
-                    _lines_to_next_level(
-                        state_obj.get("level", 1),
-                        lines_total,
-                        state_obj.get("level_progression", "fixed"),
-                        state_obj.get("start_level", 1),
-                    ),
                     preview,
                     queue,
+                    json.dumps(state_obj),
                 ),
                 background_image,
             )
@@ -976,17 +1017,9 @@ class TetriNode:
             return _wrap_result(
                 (
                     image,
-                    json.dumps(state_obj),
-                    state_obj["score"],
-                    lines_total,
-                    _lines_to_next_level(
-                        state_obj.get("level", 1),
-                        lines_total,
-                        state_obj.get("level_progression", "fixed"),
-                        state_obj.get("start_level", 1),
-                    ),
                     preview,
                     queue,
+                    json.dumps(state_obj),
                 ),
                 background_image,
             )
@@ -1061,6 +1094,7 @@ class TetriNode:
                 )
                 board, cleared = _clear_lines(board)
                 lines_cleared = cleared
+                _update_stats(state_obj, cleared)
                 level_before = state_obj.get("level", 1)
                 prev_b2b = state_obj.get("b2b_active", False)
                 gained, next_b2b = _score_action(
@@ -1097,6 +1131,7 @@ class TetriNode:
                 )
                 board, cleared = _clear_lines(board)
                 lines_cleared = cleared
+                _update_stats(state_obj, cleared)
                 level_before = state_obj.get("level", 1)
                 prev_b2b = state_obj.get("b2b_active", False)
                 gained, next_b2b = _score_action(
@@ -1153,17 +1188,9 @@ class TetriNode:
         return _wrap_result(
             (
                 image,
-                json.dumps(state_obj),
-                state_obj["score"],
-                lines_out,
-                _lines_to_next_level(
-                    state_obj.get("level", 1),
-                    lines_out,
-                    state_obj.get("level_progression", "fixed"),
-                    state_obj.get("start_level", 1),
-                ),
                 preview,
                 queue,
+                json.dumps(state_obj),
             ),
             background_image,
         )

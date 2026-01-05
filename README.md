@@ -31,15 +31,16 @@ Main gameplay node.
 - `tetrinode_options` (TETRINODE_OPTIONS): Custom keybindings, colors, and gameplay options
 - `seed` (INT): Seed used for piece sequence
 - `background_image` (IMAGE, optional): Background image for the game board (scaled to cover, then center-cropped)
+- `state_in` (STRING, link-only): Load a serialized state (use the **Load State** button)
 
 **Outputs**
-- `image` (IMAGE): current board
-- `state` (STRING): serialized game state
-- `score` (INT)
-- `lines_cleared` (FLOAT): total or awarded line clears (variable goal system)
-- `goal` (FLOAT): lines needed to reach the next level
+- `matrix` (IMAGE): current board
 - `next_piece` (IMAGE): preview image
 - `queue` (IMAGE): queue preview image
+- `state` (STRING): serialized game state
+
+**UI controls**
+- **Load State**: Applies `state_in`, validates JSON, and loads the matrix into a paused state.
 
 ### TetriNode Options
 

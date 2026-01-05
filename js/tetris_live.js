@@ -7,6 +7,7 @@ const GRID_W = 10;
 const GRID_H_TOTAL = 40;
 const GRID_H_VISIBLE = 20;
 const HIDDEN_ROWS = GRID_H_TOTAL - GRID_H_VISIBLE;
+const EXTRA_VISIBLE_ROWS = 1 / 3;
 const SPAWN_Y = HIDDEN_ROWS - 2;
 const PREVIEW_GRID = 4;
 const PREVIEW_SCALE = 0.86;
@@ -174,6 +175,10 @@ function createState(seed, startLevel = 1, levelProgression = "fixed") {
     score: 0,
     timeMs: 0,
     lines: 0,
+    tetrises: 0,
+    tspins: 0,
+    comboStreak: 0,
+    comboTotal: 0,
     startLevel: start,
     level,
     levelProgression: progression,
@@ -202,6 +207,56 @@ function createState(seed, startLevel = 1, levelProgression = "fixed") {
     moveArrElapsed: 0,
     timer: null,
   };
+}
+
+function hydrateState(serialized, fallbackSeed, startLevel = 1, levelProgression = "fixed") {
+  if (!serialized || typeof serialized !== "string") return null;
+  let data = null;
+  try {
+    data = JSON.parse(serialized);
+  } catch (err) {
+    return null;
+  }
+  if (!data || typeof data !== "object") return null;
+  const seed = Number.isInteger(data.seed) ? data.seed : fallbackSeed ?? 0;
+  const progression = data.level_progression === "variable" ? "variable" : "fixed";
+  const base = createState(seed, data.start_level || startLevel, progression);
+  if (Array.isArray(data.board)) {
+    base.board = data.board;
+  }
+  if (Array.isArray(data.bag)) {
+    base.bag = data.bag.slice();
+  }
+  if (Number.isInteger(data.bag_count)) base.bagCount = data.bag_count;
+  if (data.piece && typeof data.piece === "object") {
+    base.piece = {
+      shape: data.piece.shape,
+      rot: data.piece.rot,
+      x: data.piece.x,
+      y: data.piece.y,
+    };
+  }
+  if (data.next_piece_shape) base.nextShape = data.next_piece_shape;
+  if (data.hold_piece_shape !== undefined) base.holdShape = data.hold_piece_shape;
+  if (typeof data.hold_used === "boolean") base.holdUsed = data.hold_used;
+  if (Number.isInteger(data.score)) base.score = data.score;
+  if (Number.isFinite(data.time_ms)) base.timeMs = data.time_ms;
+  if (Number.isInteger(data.lines_cleared_total)) base.lines = data.lines_cleared_total;
+  if (Number.isFinite(data.goal_lines_total)) base.goalLinesTotal = data.goal_lines_total;
+  if (Number.isInteger(data.level)) base.level = data.level;
+  if (Number.isInteger(data.start_level)) base.startLevel = data.start_level;
+  base.levelProgression = progression;
+  if (typeof data.b2b_active === "boolean") base.b2bActive = data.b2b_active;
+  if (typeof data.game_over === "boolean") base.gameOver = data.game_over;
+  if (data.tspin) base.tspin = data.tspin;
+  if (Number.isInteger(data.tetrises)) base.tetrises = data.tetrises;
+  if (Number.isInteger(data.tspins)) base.tspins = data.tspins;
+  if (Number.isInteger(data.combo_total)) base.comboTotal = data.combo_total;
+  if (Number.isInteger(data.combo_streak)) base.comboStreak = data.combo_streak;
+  updateLevel(base);
+  base.running = false;
+  base.started = false;
+  return base;
 }
 
 function fallSpeedSeconds(level) {
@@ -445,8 +500,9 @@ function tspinType(state) {
   }
   const frontHits = front.reduce((acc, k) => acc + (cornerOccupied(state.board, ...corners[k]) ? 1 : 0), 0);
   const backHits = back.reduce((acc, k) => acc + (cornerOccupied(state.board, ...corners[k]) ? 1 : 0), 0);
-  if (frontHits + backHits < 3) return "none";
   if (state.lastRotateKick === 4) return "tspin";
+  if (frontHits + backHits < 3) return "none";
+  if (frontHits === 2 && backHits === 2) return "tspin";
   if (frontHits === 2 && backHits >= 1) return "tspin";
   if (backHits === 2 && frontHits >= 1) return "mini";
   return "none";
@@ -461,6 +517,18 @@ function settlePiece(state) {
   state.board = result.board;
   if (result.cleared > 0) {
     state.lines += result.cleared;
+    state.comboStreak = (state.comboStreak || 0) + 1;
+    if (state.comboStreak === 2) {
+      state.comboTotal = (state.comboTotal || 0) + 1;
+    }
+    if (result.cleared === 4) {
+      state.tetrises = (state.tetrises || 0) + 1;
+    }
+    if (state.tspin !== "none") {
+      state.tspins = (state.tspins || 0) + 1;
+    }
+  } else {
+    state.comboStreak = 0;
   }
   const scored = scoreForClear(levelBefore, result.cleared, state.tspin, state.b2bActive);
   state.score += scored.points;
@@ -493,6 +561,10 @@ function serializeState(state) {
     score: state.score,
     time_ms: state.timeMs,
     lines_cleared_total: state.lines,
+    tetrises: state.tetrises,
+    tspins: state.tspins,
+    combo_streak: state.comboStreak,
+    combo_total: state.comboTotal,
     game_over: state.gameOver,
     tspin: state.tspin,
   });
@@ -690,15 +762,17 @@ function getLayout(node) {
 
   let sideW = 120;
   let blockSize = BLOCK;
+  const effectiveRows = GRID_H_VISIBLE + EXTRA_VISIBLE_ROWS;
   for (let i = 0; i < 2; i += 1) {
     const boardW = Math.max(0, innerW - sideW * sideSlots - PADDING * sideSlots);
-    blockSize = Math.floor(Math.min(boardW / GRID_W, innerH / GRID_H_VISIBLE));
+    blockSize = Math.floor(Math.min(boardW / GRID_W, innerH / effectiveRows));
     blockSize = Math.max(6, blockSize);
     sideW = Math.max(PREVIEW_GRID * blockSize + PADDING * 2, 120);
   }
 
   const boardW = blockSize * GRID_W;
-  const boardH = blockSize * GRID_H_VISIBLE;
+  const extraPx = Math.round(blockSize * EXTRA_VISIBLE_ROWS);
+  const boardH = blockSize * GRID_H_VISIBLE + extraPx;
   const totalW = boardW + sideW * sideSlots + PADDING * sideSlots;
   const boardX = Math.max(PADDING, Math.round((node.size[0] - boardW) / 2));
   const boardY = Math.round(topY);
@@ -719,6 +793,7 @@ function getLayout(node) {
     sideY,
     sideW,
     blockSize,
+    extraPx,
     showHold,
     showNext,
   };
@@ -815,7 +890,7 @@ function drawGhostPiece(ctx, state, boardX, boardY, blockSize, color, outlineCol
   const cells = pieceCells(ghost);
   ctx.globalAlpha = 0.33;
   for (const [x, y] of cells) {
-    if (y >= HIDDEN_ROWS && y < GRID_H_TOTAL) {
+    if (y >= HIDDEN_ROWS - 1 && y < GRID_H_TOTAL) {
       ctx.fillStyle = color;
       ctx.fillRect(
         boardX + x * blockSize,
@@ -829,7 +904,7 @@ function drawGhostPiece(ctx, state, boardX, boardY, blockSize, color, outlineCol
   ctx.strokeStyle = outlineColor;
   ctx.lineWidth = 1;
   for (const [x, y] of cells) {
-    if (y >= HIDDEN_ROWS && y < GRID_H_TOTAL) {
+    if (y >= HIDDEN_ROWS - 1 && y < GRID_H_TOTAL) {
       ctx.strokeRect(
         boardX + x * blockSize + 0.5,
         boardY + (y - HIDDEN_ROWS) * blockSize + 0.5,
@@ -846,6 +921,15 @@ function getInputDataByName(node, name) {
   if (idx == null || idx < 0) return null;
   if (typeof node.getInputData !== "function") return null;
   return node.getInputData(idx);
+}
+
+function getInputString(node, name) {
+  const raw = getInputDataByName(node, name);
+  if (raw == null) return getLinkedStringValue(node, name);
+  if (typeof raw === "string") return raw;
+  if (Array.isArray(raw) && typeof raw[0] === "string") return raw[0];
+  if (typeof raw === "object" && typeof raw.value === "string") return raw.value;
+  return null;
 }
 
 function coerceImageSource(value) {
@@ -1140,7 +1224,7 @@ function drawBoardBackground(ctx, source, boardX, boardY, boardW, boardH, fallba
   ctx.drawImage(source, sx, sy, cropW, cropH, boardX, boardY, boardW, boardH);
 }
 
-function drawBoardGrid(ctx, boardX, boardY, boardW, boardH, blockSize, color) {
+function drawBoardGrid(ctx, boardX, boardY, boardW, boardH, blockSize, color, extraPx) {
   ctx.strokeStyle = color;
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -1149,8 +1233,9 @@ function drawBoardGrid(ctx, boardX, boardY, boardW, boardH, blockSize, color) {
     ctx.moveTo(lineX, boardY - 0.5);
     ctx.lineTo(lineX, boardY + boardH + 0.5);
   }
-  for (let y = 1; y < GRID_H_VISIBLE; y += 1) {
-    const lineY = boardY + y * blockSize - 0.5;
+  const yOffset = extraPx || 0;
+  for (let y = 0; y < GRID_H_VISIBLE; y += 1) {
+    const lineY = boardY + yOffset + y * blockSize - 0.5;
     ctx.moveTo(boardX - 0.5, lineY);
     ctx.lineTo(boardX + boardW + 0.5, lineY);
   }
@@ -1163,6 +1248,7 @@ function drawNode(node, ctx) {
   if (!node.__tetrisWidgetsHidden) {
     applyWidgetHiding(node);
   }
+  applyStateInput(node);
   syncStartLevel(live.state, node);
   syncSeed(live.state, node);
   const { state } = live;
@@ -1175,11 +1261,14 @@ function drawNode(node, ctx) {
     sideY,
     sideW,
     blockSize,
+    extraPx,
     showHold,
     showNext,
   } = getLayout(node);
   const palette = getColorPalette(node);
   const ghostEnabled = isGhostEnabled(node);
+  const showPreviews = state.started && state.running;
+  const showBoardContents = showPreviews || state.gameOver;
   const showControls = getShowControls(node);
   const gridEnabled = getGridEnabled(node);
   const gridColor = getGridColor(node);
@@ -1187,36 +1276,67 @@ function drawNode(node, ctx) {
   const bgSource = getBackgroundSource(node);
   drawBoardBackground(ctx, bgSource, boardX, boardY, boardW, boardH, palette.X);
   if (gridEnabled && gridColor) {
-    drawBoardGrid(ctx, boardX, boardY, boardW, boardH, blockSize, gridColor);
+    drawBoardGrid(ctx, boardX, boardY, boardW, boardH, blockSize, gridColor, extraPx);
   }
   ctx.strokeStyle = "rgba(150,150,150,0.8)";
   ctx.lineWidth = 1;
   ctx.strokeRect(boardX - 0.5, boardY - 0.5, boardW + 1, boardH + 1);
 
-  for (let y = 0; y < GRID_H_VISIBLE; y += 1) {
-    const boardYIndex = y + HIDDEN_ROWS;
-    for (let x = 0; x < GRID_W; x += 1) {
-      const cell = state.board[boardYIndex][x];
-      if (cell) {
-        drawBlockSized(ctx, boardX + x * blockSize, boardY + y * blockSize, blockSize, palette[cell]);
+  const hideBoard = !state.gameOver && state.started && !state.running && !state.showBoardWhilePaused;
+  if (!hideBoard) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(boardX, boardY, boardW, boardH);
+    ctx.clip();
+    if (HIDDEN_ROWS > 0 && showBoardContents) {
+      const hiddenRow = HIDDEN_ROWS - 1;
+      for (let x = 0; x < GRID_W; x += 1) {
+        const cell = state.board[hiddenRow][x];
+        if (cell) {
+          drawBlockSized(
+            ctx,
+            boardX + x * blockSize,
+            boardY - blockSize + extraPx,
+            blockSize,
+            palette[cell],
+          );
+        }
       }
     }
-  }
-
-  if (!state.gameOver && ghostEnabled) {
-    drawGhostPiece(ctx, state, boardX, boardY, blockSize, palette[state.piece.shape], COLORS.Text);
-  }
-
-  for (const [x, y] of pieceCells(state.piece)) {
-    if (y >= HIDDEN_ROWS && y < GRID_H_TOTAL) {
-      drawBlockSized(
-        ctx,
-        boardX + x * blockSize,
-        boardY + (y - HIDDEN_ROWS) * blockSize,
-        blockSize,
-        palette[state.piece.shape],
-      );
+    for (let y = 0; y < GRID_H_VISIBLE; y += 1) {
+      const boardYIndex = y + HIDDEN_ROWS;
+      for (let x = 0; x < GRID_W; x += 1) {
+        const cell = state.board[boardYIndex][x];
+        if (cell) {
+          drawBlockSized(
+            ctx,
+            boardX + x * blockSize,
+            boardY + y * blockSize + extraPx,
+            blockSize,
+            palette[cell],
+          );
+        }
+      }
     }
+
+    if (!state.gameOver && ghostEnabled && showPreviews) {
+      drawGhostPiece(ctx, state, boardX, boardY + extraPx, blockSize, palette[state.piece.shape], COLORS.Text);
+    }
+
+    if (showBoardContents) {
+      for (const [x, y] of pieceCells(state.piece)) {
+        if (y >= HIDDEN_ROWS - 1 && y < GRID_H_TOTAL) {
+          drawBlockSized(
+            ctx,
+            boardX + x * blockSize,
+            boardY + (y - HIDDEN_ROWS) * blockSize + extraPx,
+            blockSize,
+            palette[state.piece.shape],
+          );
+        }
+      }
+    }
+    ctx.restore();
   }
 
   const previewBox = Math.max(4, Math.floor(PREVIEW_GRID * blockSize * PREVIEW_SCALE));
@@ -1239,7 +1359,7 @@ function drawNode(node, ctx) {
   };
   let hudFontSize = Math.max(8, Math.floor(blockSize * 0.5));
   while (hudFontSize > 8) {
-    if (measureFits(hudFontSize, ["Lines:", "Score:", "Time:", "Level:", "Goal:"], maxWidthLeft)) break;
+    if (measureFits(hudFontSize, ["Lines:", "Score:", "Time:", "Level:", "Goal:", "Tetrises:", "T-Spins:", "Combos:", "TPM:", "LPM:"], maxWidthLeft)) break;
     hudFontSize -= 1;
   }
   const scoreFontSize = Math.max(7, hudFontSize - 1);
@@ -1261,6 +1381,17 @@ function drawNode(node, ctx) {
   const levelValueY = levelLabelY;
   const goalLabelY = levelLabelY + lineGap + scoreFontSize;
   const goalValueY = goalLabelY;
+  const statsTopY = goalLabelY + lineGap + scoreFontSize + 6;
+  const tetrisLabelY = statsTopY + scoreFontSize;
+  const tetrisValueY = tetrisLabelY;
+  const tspinLabelY = tetrisLabelY + lineGap + scoreFontSize;
+  const tspinValueY = tspinLabelY;
+  const comboLabelY = tspinLabelY + lineGap + scoreFontSize;
+  const comboValueY = comboLabelY;
+  const tpmLabelY = comboLabelY + lineGap + scoreFontSize;
+  const tpmValueY = tpmLabelY;
+  const lpmLabelY = tpmLabelY + lineGap + scoreFontSize;
+  const lpmValueY = lpmLabelY;
   ctx.font = `bold ${scoreFontSize}px sans-serif`;
   ctx.textAlign = "left";
   ctx.fillText("Score:", leftX, scoreLabelY);
@@ -1268,6 +1399,11 @@ function drawNode(node, ctx) {
   ctx.fillText("Lines:", leftX, linesLabelY);
   ctx.fillText("Level:", leftX, levelLabelY);
   ctx.fillText("Goal:", leftX, goalLabelY);
+  ctx.fillText("Tetrises:", leftX, tetrisLabelY);
+  ctx.fillText("T-Spins:", leftX, tspinLabelY);
+  ctx.fillText("Combos:", leftX, comboLabelY);
+  ctx.fillText("TPM:", leftX, tpmLabelY);
+  ctx.fillText("LPM:", leftX, lpmLabelY);
   ctx.font = `${scoreFontSize}px sans-serif`;
   const linesValue = state.levelProgression === "variable" ? state.goalLinesTotal : state.lines;
   const linesText =
@@ -1279,6 +1415,11 @@ function drawNode(node, ctx) {
     Number.isFinite(remaining) && Math.abs(remaining % 1) > 0.001
       ? remaining.toFixed(1)
       : `${Math.round(remaining)}`;
+  const minutes = state.timeMs > 0 ? state.timeMs / 60000 : 0;
+  const tpm = minutes > 0 ? (state.tetrises || 0) / minutes : 0;
+  const lpm = minutes > 0 ? (state.lines || 0) / minutes : 0;
+  const tpmText = minutes > 0 ? tpm.toFixed(1) : "0";
+  const lpmText = minutes > 0 ? lpm.toFixed(1) : "0";
   const valueX = leftX + previewBox - 2;
   ctx.textAlign = "right";
   ctx.fillText(`${state.score}`, valueX, scoreValueY);
@@ -1286,6 +1427,11 @@ function drawNode(node, ctx) {
   ctx.fillText(linesText, valueX, linesValueY);
   ctx.fillText(`${state.level}`, valueX, levelValueY);
   ctx.fillText(remainingText, valueX, goalValueY);
+  ctx.fillText(`${state.tetrises || 0}`, valueX, tetrisValueY);
+  ctx.fillText(`${state.tspins || 0}`, valueX, tspinValueY);
+  ctx.fillText(`${state.comboTotal || 0}`, valueX, comboValueY);
+  ctx.fillText(tpmText, valueX, tpmValueY);
+  ctx.fillText(lpmText, valueX, lpmValueY);
   ctx.textAlign = "left";
   const bindings = getControlBindings(node);
   const controlEntries = showControls
@@ -1352,10 +1498,10 @@ function drawNode(node, ctx) {
   const holdNextTitleY = nextBoxY + titleFontSize + 4;
   const titleInset = Math.max(4, Math.floor(titleFontSize * 0.5));
   ctx.font = `bold ${titleFontSize}px sans-serif`;
-  if (showHold) {
+  if (showHold && showPreviews) {
     ctx.fillText("Hold", leftX + titleInset, holdNextTitleY);
   }
-  if (showNext) {
+  if (showNext && showPreviews) {
     ctx.fillText("Next", rightX + titleInset, holdNextTitleY);
   }
 
@@ -1393,20 +1539,20 @@ function drawNode(node, ctx) {
 
   const previewContentH = Math.max(4, previewBox - titleHeight);
   const nextCellSize = Math.max(4, Math.floor((previewContentH - innerPad * 2) / PREVIEW_GRID));
-  if (showHold) {
+  if (showHold && showPreviews) {
     drawPreviewShape(state.holdShape, leftX, nextBoxY + titleHeight, nextCellSize, previewContentH);
     ctx.strokeStyle = "rgba(150,150,150,0.8)";
     ctx.lineWidth = 1;
     ctx.strokeRect(leftX + 0.5, nextBoxY + 0.5, previewBox - 1, previewBox - 1);
   }
-  if (showNext) {
+  if (showNext && showPreviews) {
     drawPreviewShape(state.nextShape, rightX, nextBoxY + titleHeight, nextCellSize, previewContentH);
     ctx.strokeStyle = "rgba(150,150,150,0.8)";
     ctx.lineWidth = 1;
     ctx.strokeRect(rightX + 0.5, nextBoxY + 0.5, previewBox - 1, previewBox - 1);
   }
 
-  const queueCountTarget = showNext ? getQueueSize(node) : 0;
+  const queueCountTarget = showNext && showPreviews ? getQueueSize(node) : 0;
   const showQueue = queueCountTarget > 0;
   const queueBoxY = nextBoxY + previewBox + PADDING * 1.2;
   const queueBoxW = previewBox;
@@ -1547,30 +1693,81 @@ function drawNode(node, ctx) {
   }
 
   if (state.gameOver) {
-    ctx.fillStyle = COLORS.Overlay;
-    ctx.fillRect(boardX, boardY, boardW, boardH);
-    ctx.fillStyle = COLORS.Text;
-    const statusFont = Math.max(12, Math.floor(blockSize * 0.8));
-    ctx.font = `${statusFont}px sans-serif`;
-    ctx.fillText("Game Over", boardX + 28, boardY + boardH / 2);
-  } else if (!state.running) {
-    ctx.fillStyle = COLORS.Overlay;
-    ctx.fillRect(boardX, boardY, boardW, boardH);
-    ctx.fillStyle = COLORS.Text;
-    const statusFont = Math.max(12, Math.floor(blockSize * 0.8));
-    const subFont = Math.max(10, Math.floor(blockSize * 0.55));
+    drawPauseOverlay(ctx, node, boardX, boardY, boardW, boardH, blockSize, bindings, {
+      label: "Game Over",
+      sublabel: `Press Reset or ${formatPauseHint(bindings)} to play`,
+      centerOffsetY: 0,
+    });
+  } else if (!state.running && state.showBoardWhilePaused) {
+    drawPauseOverlay(ctx, node, boardX, boardY, boardW, boardH, blockSize, bindings, {
+      label: "Paused",
+      sublabel: `Press ${formatPauseHint(bindings)} to resume`,
+      centerOffsetY: 0,
+    });
+  } else if (!state.running && !state.showBoardWhilePaused) {
     const label = state.started ? "Paused" : "Start a new game";
-    const pauseLabel = formatKeyLabel(bindings.pause) || "Pause";
-    const pauseAlt = formatKeyLabel(bindings.pause2);
-    const pauseHint = pauseAlt ? `${pauseLabel} (or ${pauseAlt})` : pauseLabel;
     const sublabel = state.started
-      ? `Press ${pauseHint} to resume`
+      ? `Press ${formatPauseHint(bindings)} to resume`
       : "Press Reset or Pause to play";
-    ctx.font = `${statusFont}px sans-serif`;
-    ctx.fillText(label, boardX + 28, boardY + boardH / 2 - Math.floor(subFont));
-    ctx.font = `${subFont}px sans-serif`;
-    ctx.fillText(sublabel, boardX + 28, boardY + boardH / 2 + subFont);
+    drawPauseOverlay(ctx, node, boardX, boardY, boardW, boardH, blockSize, bindings, {
+      label,
+      sublabel,
+      centerOffsetY: 0,
+    });
   }
+
+  drawStatusMessage(node, ctx, { boardX, boardY, boardW, boardH, blockSize, bindings });
+}
+
+function formatPauseHint(bindings) {
+  const pauseLabel = formatKeyLabel(bindings.pause) || "Pause";
+  const pauseAlt = formatKeyLabel(bindings.pause2);
+  return pauseAlt ? `${pauseLabel} (or ${pauseAlt})` : pauseLabel;
+}
+
+function drawPauseOverlay(ctx, node, boardX, boardY, boardW, boardH, blockSize, bindings, opts) {
+  const { label, sublabel, centerOffsetY } = opts;
+  ctx.fillStyle = COLORS.Overlay;
+  ctx.fillRect(boardX, boardY, boardW, boardH);
+  ctx.fillStyle = COLORS.Text;
+  const statusFont = Math.max(12, Math.floor(blockSize * 0.8));
+  const subFont = Math.max(10, Math.floor(blockSize * 0.55));
+  const centerY = boardY + boardH / 2 + (centerOffsetY || 0);
+  ctx.font = `${statusFont}px sans-serif`;
+  ctx.fillText(label, boardX + 28, centerY - Math.floor(subFont));
+  ctx.font = `${subFont}px sans-serif`;
+  ctx.fillText(sublabel, boardX + 28, centerY + subFont);
+}
+
+function drawStatusMessage(node, ctx, layout) {
+  const msg = node.__tetrisStatusMessage;
+  if (!msg) return;
+  if (performance.now() > msg.until) {
+    node.__tetrisStatusMessage = null;
+    return;
+  }
+  const { boardX, boardY, boardW, boardH, blockSize, bindings } = layout;
+  const pauseHint = formatPauseHint(bindings);
+  drawPauseOverlay(ctx, node, boardX, boardY, boardW, boardH, blockSize, bindings, {
+    label: "Paused",
+    sublabel: `Press ${pauseHint} to resume`,
+    centerOffsetY: 0,
+  });
+  const text = msg.text || "";
+  if (!text) return;
+  ctx.save();
+  ctx.font = "12px sans-serif";
+  const paddingX = 10;
+  const paddingY = 6;
+  const width = ctx.measureText(text).width + paddingX * 2;
+  const height = 20 + paddingY;
+  const x = boardX + (boardW - width) / 2;
+  const y = boardY + 100 - height / 2;
+  ctx.fillStyle = msg.kind === "error" ? "rgba(180,60,60,0.85)" : "rgba(30,120,60,0.85)";
+  ctx.fillRect(x, y, width, height);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(text, x + paddingX, y + height - 8);
+  ctx.restore();
 }
 
 function ensureBackgroundUpdater(node) {
@@ -1585,7 +1782,93 @@ function ensureBackgroundUpdater(node) {
   }, 250);
 }
 
+function applyStateInput(node, { force = false } = {}) {
+  const live = node.__tetrisLive;
+  if (!live) return;
+  if (!force && !node.__tetrisApplyStateRequested) return;
+  const incoming = getInputString(node, "state_in");
+  if (!incoming || !incoming.trim()) {
+    setStatusMessage(node, "No state input found.", "error");
+    node.__tetrisApplyStateRequested = false;
+    return;
+  }
+  if (!force && node.__tetrisStateInValue === incoming) {
+    node.__tetrisApplyStateRequested = false;
+    return;
+  }
+  let parsed = null;
+  try {
+    parsed = JSON.parse(incoming);
+  } catch (err) {
+    setStatusMessage(node, "Invalid state JSON.", "error");
+    node.__tetrisApplyStateRequested = false;
+    return;
+  }
+  const validationError = validateStatePayload(parsed);
+  if (validationError) {
+    setStatusMessage(node, validationError, "error");
+    node.__tetrisApplyStateRequested = false;
+    return;
+  }
+  const seed = getSeedValue(node, { allowRandomize: false });
+  const startLevel = getStartLevel(node);
+  const progression = getLevelProgression(node);
+  const hydrated = hydrateState(incoming, seed ?? 0, startLevel, progression);
+  if (!hydrated) {
+    setStatusMessage(node, "Failed to load state.", "error");
+    node.__tetrisApplyStateRequested = false;
+    return;
+  }
+  node.__tetrisStateInValue = incoming;
+  node.__tetrisLive.state = hydrated;
+  node.__tetrisLive.state.started = true;
+  node.__tetrisLive.state.running = false;
+  node.__tetrisLive.state.showBoardWhilePaused = true;
+  resetInputState(node.__tetrisLive.state);
+  stopTimer(node);
+  ensureTimer(node);
+  updateBackendState(node);
+  node.setDirtyCanvas(true, true);
+  setStatusMessage(node, "State loaded.", "success");
+  node.__tetrisApplyStateRequested = false;
+}
+
+function validateStatePayload(payload) {
+  if (!payload || typeof payload !== "object") return "Invalid state payload.";
+  if (!Array.isArray(payload.board)) return "State missing board.";
+  if (payload.board.length !== GRID_H_TOTAL) return "Board must be 40 rows.";
+  for (const row of payload.board) {
+    if (!Array.isArray(row) || row.length !== GRID_W) return "Board rows must be 10 columns.";
+  }
+  const piece = payload.piece;
+  if (!piece || typeof piece !== "object") return "State missing piece.";
+  if (typeof piece.shape !== "string") return "Piece shape missing.";
+  if (!Number.isInteger(piece.rot)) return "Piece rotation invalid.";
+  if (!Number.isInteger(piece.x) || !Number.isInteger(piece.y)) return "Piece position invalid.";
+  return null;
+}
+
+function setStatusMessage(node, text, kind = "info") {
+  node.__tetrisStatusMessage = {
+    text,
+    kind,
+    until: performance.now() + 2500,
+  };
+  node.setDirtyCanvas(true, true);
+}
+
+function resetInputState(state) {
+  state.moveDir = null;
+  state.moveHeldLeft = false;
+  state.moveHeldRight = false;
+  state.moveDasElapsed = 0;
+  state.moveArrElapsed = 0;
+  state.softDrop = false;
+  state.dropMs = state.baseDropMs;
+}
+
 function syncSeed(state, node) {
+  if (getInputString(node, "state_in")) return;
   const nextSeed = getSeedValue(node, { allowRandomize: false });
   if (Number.isInteger(nextSeed)) {
     if (nextSeed !== state.seed) {
@@ -1677,6 +1960,7 @@ function resetNode(node) {
   node.__tetrisSizeInitialized = true;
   live.state.started = true;
   live.state.running = true;
+  live.state.showBoardWhilePaused = false;
   updateBackendState(node);
   node.setDirtyCanvas(true, true);
 }
@@ -1690,6 +1974,7 @@ function togglePause(node) {
   } else {
     live.state.running = !live.state.running;
   }
+  live.state.showBoardWhilePaused = false;
   updateBackendState(node);
   node.setDirtyCanvas(true, true);
 }
@@ -2534,6 +2819,9 @@ function applySeedAfterGenerate(node) {
   if (mode === "fixed") return;
   const min = coerceInt(seedWidget.options?.min) ?? 0;
   const maxOption = seedWidget.options?.max;
+  if (maxOption != null && !Number.isSafeInteger(maxOption)) {
+    return;
+  }
   const max =
     Number.isFinite(maxOption) && Number.isSafeInteger(maxOption)
       ? maxOption
@@ -2578,6 +2866,10 @@ app.registerExtension({
       node.__tetrisSizeInitialized = true;
     }
 
+    node.addWidget("button", "Load State", "Load State", () => {
+      node.__tetrisApplyStateRequested = true;
+      applyStateInput(node, { force: true });
+    });
     node.addWidget("button", "Reset", "Reset", () => resetNode(node));
     node.addWidget("button", "Pause/Play", "Pause", () => togglePause(node));
 
