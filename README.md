@@ -17,7 +17,7 @@ A ComfyUI custom node pack that embeds a playable Tetris game inside a node UI, 
 - Level progression with official fall speeds
 - Pause/Play and Reset controls
 - Seeded piece generation with a standard seed widget available
-- Optional keybinding configuration via `TetriNode Options` node
+- In-node toolbar with modal configuration for controls, colors, gameplay, and theme
 
 ## Nodes
 
@@ -28,10 +28,8 @@ Main gameplay node.
 ![TetriNode node UI](docs/images/tetrinode.png)
 
 **Inputs**
-- `tetrinode_options` (TETRINODE_OPTIONS): Custom keybindings, colors, and gameplay options
 - `seed` (INT): Seed used for piece sequence
 - `background_image` (IMAGE, optional): Background image for the game board (scaled to cover, then center-cropped)
-- `state_in` (STRING, link-only): Load a serialized state (use the **Load State** button)
 
 **Outputs**
 - `matrix` (IMAGE): current board
@@ -40,33 +38,17 @@ Main gameplay node.
 - `state` (STRING): serialized game state
 
 **UI controls**
-- **Load State**: Applies `state_in`, validates JSON, and loads the matrix into a paused state.
+- **Top toolbar**: Load State, Reset, Pause/Play, and configuration modals (Controls, Colors, Gameplay, Theme).
+- **Load State**: Opens a modal to paste a serialized state. The game pauses after loading.
 
-### TetriNode Options
+### Configuration modals
 
-Optional node that provides keybindings.
+All configuration now lives inside TetriNode (no external options node).
 
-![TetriNode Options node UI](docs/images/options.png)
-
-**Inputs**
-
-- `show_controls`: Toggle the controls table (default: on)
-- Key bindings (dropdowns): `move_left`, `move_left_2`, `move_right`, `move_right_2`, `rotate_cw`, `rotate_cw_2`, `rotate_cw_3`, `rotate_cw_4`, `rotate_cw_5`, `rotate_ccw`, `rotate_ccw_2`, `rotate_ccw_3`, `rotate_ccw_4`, `soft_drop`, `soft_drop_2`, `hard_drop`, `hard_drop_2`, `hold`, `hold_2`, `hold_3`, `reset`, `reset_2`, `pause`, `pause_2`
-- `color_i`, `color_j`, `color_l`, `color_o`, `color_s`, `color_t`, `color_z`: Hex colors for each tetromino (e.g. `#55D6FF`)
-- `background_color`: Hex color for the board background (ignored when a background image is connected)
-- `ghost_piece`: Toggle for the ghost piece (default: on)
-- `next_piece`: Toggle next piece display (default: on)
-- `hold_queue`: Toggle hold queue display (default: on)
-- `lock_down_mode`: Lock down behavior (`extended`, `infinite`, `classic`, default: `extended`)
-- `start_level`: Starting level (1-15, default: 1)
-- `level_progression`: Level goal system (`fixed` or `variable`, default: `fixed`)
-- `queue_size`: Number of queue pieces to display (0-6, default: 6)
-- `grid_enabled`: Toggle playfield grid (default: on)
-- `grid_color`: RGBA grid color (default: `rgba(255,255,255,0.2)`)
-
-**Outputs**
-
-- `tetrinode_options` (TETRINODE_OPTIONS): Custom keybindings, colors, and gameplay options
+- **Controls**: Click Add to capture a key (up to 5 per action). Remove any binding with the `X`, or reset per action. Capture supports the same allowed keys as before and shows human-friendly labels.
+- **Colors**: Per-piece colors plus background and grid colors. Supports hex and RGBA (alpha for pieces and grid).
+- **Gameplay**: Toggles (controls/ghost/next/hold/grid), lock-down mode, level progression, start level, and queue size.
+- **Theme**: Glass/Flat/Neon/Minimal presets with editable colors and a “Reset All Theme Colors” button.
 
 ## Controls (Default)
 
@@ -161,7 +143,7 @@ The node pack is also available on the Comfy Registry site by [clicking here](ht
 
 1. Copy this repository into `ComfyUI/custom_nodes/TetriNode/`.
 2. Restart ComfyUI.
-3. Add `TetriNode` and (optionally) `TetriNode Options` from the node list.
+3. Add `TetriNode` from the node list.
 
 ## License
 

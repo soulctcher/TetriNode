@@ -14,8 +14,8 @@ const PREVIEW_SCALE = 0.86;
 const BLOCK = 16;
 const PADDING = 12;
 const HEADER_H = 28;
+const TOOLBAR_H = 44;
 const CONTROL_GAP = 0;
-const PAUSE_GAP = 6;
 const CONTROL_MIN = 110;
 const DAS_MS = 300;
 const ARR_MS = 56;
@@ -33,6 +33,96 @@ const COLORS = {
   Text: "rgb(235,235,235)",
   Overlay: "rgba(0,0,0,0.55)",
 };
+
+const THEME_PRESETS = {
+  glass: {
+    panel_bg: "rgba(20,24,32,0.55)",
+    panel_border: "rgba(255,255,255,0.18)",
+    panel_shadow: "rgba(0,0,0,0.35)",
+    accent: "rgba(120,200,255,0.9)",
+    text: "#F2F5F8",
+    button_bg: "rgba(255,255,255,0.08)",
+    button_hover: "rgba(255,255,255,0.18)",
+  },
+  flat: {
+    panel_bg: "rgba(30,30,34,0.92)",
+    panel_border: "rgba(255,255,255,0.12)",
+    panel_shadow: "rgba(0,0,0,0.25)",
+    accent: "#5BD7FF",
+    text: "#F2F2F2",
+    button_bg: "rgba(255,255,255,0.06)",
+    button_hover: "rgba(255,255,255,0.16)",
+  },
+  neon: {
+    panel_bg: "rgba(12,12,18,0.82)",
+    panel_border: "rgba(120,255,200,0.35)",
+    panel_shadow: "rgba(0,0,0,0.35)",
+    accent: "#7CFFB0",
+    text: "#E9FFF4",
+    button_bg: "rgba(124,255,176,0.08)",
+    button_hover: "rgba(124,255,176,0.2)",
+  },
+  minimal: {
+    panel_bg: "rgba(24,26,28,0.9)",
+    panel_border: "rgba(255,255,255,0.08)",
+    panel_shadow: "rgba(0,0,0,0.2)",
+    accent: "#A6B0FF",
+    text: "#F4F4F4",
+    button_bg: "rgba(255,255,255,0.05)",
+    button_hover: "rgba(255,255,255,0.12)",
+  },
+};
+
+const DEFAULT_CONFIG = {
+  theme: "glass",
+  theme_colors: JSON.parse(JSON.stringify(THEME_PRESETS)),
+  bindings: {
+    move_left: ["arrowleft", "numpad4"],
+    move_right: ["arrowright", "numpad6"],
+    rotate_cw: ["arrowup", "numpad5", "x", "numpad1", "numpad9"],
+    rotate_ccw: ["control", "numpad3", "z", "numpad7"],
+    soft_drop: ["arrowdown", "numpad2"],
+    hard_drop: [" ", "numpad8"],
+    hold: ["shift", "numpad0", "c"],
+    reset: ["r"],
+    pause: ["escape", "f1"],
+  },
+  colors: {
+    color_i: "#55D6FF",
+    color_j: "#5669FF",
+    color_l: "#FFA74F",
+    color_o: "#FFE757",
+    color_s: "#7AEB84",
+    color_t: "#BB80FF",
+    color_z: "#FF7676",
+    background_color: "#32343E",
+  },
+  ghost_piece: true,
+  next_piece: true,
+  hold_queue: true,
+  show_controls: true,
+  lock_down_mode: "extended",
+  start_level: 1,
+  level_progression: "fixed",
+  queue_size: 6,
+  grid_enabled: true,
+  grid_color: "rgba(255,255,255,0.2)",
+};
+
+const ALLOWED_KEYS = new Set([
+  "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p",
+  "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+  "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+  "arrowleft", "arrowright", "arrowup", "arrowdown",
+  " ", "enter", "tab", "escape", "backspace", "delete", "insert",
+  "home", "end", "pageup", "pagedown",
+  "control", "shift",
+  "numpad0", "numpad1", "numpad2", "numpad3", "numpad4",
+  "numpad5", "numpad6", "numpad7", "numpad8", "numpad9",
+  "numpadadd", "numpadsubtract", "numpadmultiply", "numpaddivide", "numpaddecimal", "numpadenter",
+  "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+  "-", "=", "[", "]", "\\", ";", "'", ",", ".", "/", "`",
+]);
 
 const SHAPES = {
   I: [
@@ -566,6 +656,7 @@ function serializeState(state) {
     combo_total: state.comboTotal,
     game_over: state.gameOver,
     tspin: state.tspin,
+    options: state.options || {},
   });
 }
 
@@ -579,6 +670,7 @@ function updateBackendState(node) {
     node.widgets_values = [];
   }
   if (stateWidget) {
+    node.__tetrisLive.state.options = getOptionsForState(node);
     const stateValue = serializeState(node.__tetrisLive.state);
     stateWidget.value = stateValue;
     if (stateIndex >= 0) node.widgets_values[stateIndex] = stateValue;
@@ -698,54 +790,10 @@ function holdPiece(state) {
   return true;
 }
 
-function getWidgetBottom(node) {
-  if (!node.widgets) return 0;
-  let maxY = 0;
-  let maxMeasured = 0;
-  let flowY = HEADER_H + PADDING;
-  for (const w of node.widgets) {
-    if (w?.hidden) continue;
-    let h = 24;
-    if (typeof w.computeSize === "function") {
-      const size = w.computeSize();
-      if (size && Number.isFinite(size[1]) && size[1] > 0) {
-        h = size[1];
-      }
-    }
-    if (w?.type === "button") {
-      h = Math.max(h, 28);
-    }
-    flowY += h + 6;
-    maxY = Math.max(maxY, flowY);
-    if (typeof w.last_y === "number" && w.last_y > 0) {
-      maxMeasured = Math.max(maxMeasured, w.last_y + h);
-    }
-  }
-  return maxMeasured > 0 ? maxMeasured : maxY;
-}
-
 function getLayout(node) {
-  let widgetBottom = getWidgetBottom(node);
-  const pauseWidget = node?.widgets?.find((w) => w.name === "Pause/Play");
-  let pauseBottom = null;
-  if (pauseWidget) {
-    let pauseH = 24;
-    if (typeof pauseWidget.computeSize === "function") {
-      const size = pauseWidget.computeSize();
-      if (size && Number.isFinite(size[1]) && size[1] > 0) {
-        pauseH = size[1];
-      }
-    }
-    if (pauseWidget.type === "button") {
-      pauseH = Math.max(pauseH, 32);
-    }
-    if (typeof pauseWidget.last_y === "number" && pauseWidget.last_y > 0) {
-      pauseBottom = pauseWidget.last_y + pauseH;
-      widgetBottom = pauseBottom + PAUSE_GAP;
-    }
-  }
-  const minTop = HEADER_H + PADDING + CONTROL_MIN;
-  const topY = Math.max(minTop, widgetBottom + CONTROL_GAP);
+  const pauseBottom = null;
+  const minTop = HEADER_H + PADDING + TOOLBAR_H + CONTROL_MIN;
+  const topY = Math.max(minTop, HEADER_H + PADDING + TOOLBAR_H + CONTROL_GAP);
   const bottomY = Math.max(topY, node.size[1] - PADDING);
   const innerH = Math.max(0, bottomY - topY);
   const innerW = Math.max(0, node.size[0] - PADDING * 2);
@@ -794,23 +842,8 @@ function getLayout(node) {
 
 function getLockMode(node) {
   const defaultMode = "extended";
-  const normalize = (value) => {
-    const raw = `${value}`.trim().toLowerCase();
-    if (!raw) return null;
-    if (["extended", "infinite", "classic"].includes(raw)) return raw;
-    return null;
-  };
-  const linked = getLinkedOptionsNode(node);
-  if (linked?.widgets) {
-    const widget = linked.widgets.find((w) => w.name === "lock_down_mode");
-    const parsed = normalize(widget?.value);
-    if (parsed) return parsed;
-  }
-  if (node?.widgets) {
-    const widget = node.widgets.find((w) => w.name === "lock_down_mode");
-    const parsed = normalize(widget?.value);
-    if (parsed) return parsed;
-  }
+  const raw = `${getConfig(node).lock_down_mode || ""}`.trim().toLowerCase();
+  if (["extended", "infinite", "classic"].includes(raw)) return raw;
   return defaultMode;
 }
 
@@ -914,15 +947,6 @@ function getInputDataByName(node, name) {
   if (idx == null || idx < 0) return null;
   if (typeof node.getInputData !== "function") return null;
   return node.getInputData(idx);
-}
-
-function getInputString(node, name) {
-  const raw = getInputDataByName(node, name);
-  if (raw == null) return getLinkedStringValue(node, name);
-  if (typeof raw === "string") return raw;
-  if (Array.isArray(raw) && typeof raw[0] === "string") return raw[0];
-  if (typeof raw === "object" && typeof raw.value === "string") return raw.value;
-  return null;
 }
 
 function coerceImageSource(value) {
@@ -1241,7 +1265,6 @@ function drawNode(node, ctx) {
   if (!node.__tetrisWidgetsHidden) {
     applyWidgetHiding(node);
   }
-  applyStateInput(node);
   syncStartLevel(live.state, node);
   syncSeed(live.state, node);
   const { state } = live;
@@ -1258,6 +1281,7 @@ function drawNode(node, ctx) {
     showHold,
     showNext,
   } = getLayout(node);
+  const theme = getThemeColors(node);
   const palette = getColorPalette(node);
   const ghostEnabled = isGhostEnabled(node);
   const showPreviews = state.started && state.running;
@@ -1361,7 +1385,7 @@ function drawNode(node, ctx) {
   const titlePad = Math.max(6, Math.floor(titleFontSize * 0.6));
   const titleHeight = titleFontSize + titlePad;
   const nextBoxY = boardY;
-  ctx.fillStyle = COLORS.Text;
+  ctx.fillStyle = theme.text;
   const lineGap = Math.floor(scoreFontSize * 0.6);
   const leftHudTopY = showHold ? nextBoxY + previewBox + PADDING * 1.2 : sideY;
   const scoreLabelY = leftHudTopY + scoreFontSize + 1;
@@ -1429,15 +1453,15 @@ function drawNode(node, ctx) {
   const bindings = getControlBindings(node);
   const controlEntries = showControls
     ? [
-      { label: "Move Left:", value: formatKeyList([bindings.moveLeft, bindings.moveLeft2]) },
-      { label: "Move Right:", value: formatKeyList([bindings.moveRight, bindings.moveRight2]) },
-      { label: "Rotate CW:", value: formatKeyList([bindings.rotateCw, bindings.rotateCw2, bindings.rotateCw3, bindings.rotateCw4, bindings.rotateCw5]) },
-      { label: "Rotate CCW:", value: formatKeyList([bindings.rotateCcw, bindings.rotateCcw2, bindings.rotateCcw3, bindings.rotateCcw4]) },
-      { label: "Soft Drop:", value: formatKeyList([bindings.softDrop, bindings.softDrop2]) },
-      { label: "Hard Drop:", value: formatKeyList([bindings.hardDrop, bindings.hardDrop2]) },
-      { label: "Hold:", value: formatKeyList([bindings.hold, bindings.hold2, bindings.hold3]) },
-      { label: "Reset:", value: formatKeyList([bindings.reset, bindings.reset2]) },
-      { label: "Pause:", value: formatKeyList([bindings.pause, bindings.pause2]) },
+      { label: "Move Left:", value: formatKeyList(bindings.moveLeft) },
+      { label: "Move Right:", value: formatKeyList(bindings.moveRight) },
+      { label: "Rotate CW:", value: formatKeyList(bindings.rotateCw) },
+      { label: "Rotate CCW:", value: formatKeyList(bindings.rotateCcw) },
+      { label: "Soft Drop:", value: formatKeyList(bindings.softDrop) },
+      { label: "Hard Drop:", value: formatKeyList(bindings.hardDrop) },
+      { label: "Hold:", value: formatKeyList(bindings.hold) },
+      { label: "Reset:", value: formatKeyList(bindings.reset) },
+      { label: "Pause:", value: formatKeyList(bindings.pause) },
     ]
     : [];
   let fontSize = Math.max(4, Math.floor(blockSize * 0.3));
@@ -1553,7 +1577,7 @@ function drawNode(node, ctx) {
   const queueTitleY = queueBoxY + titleFontSize + 4;
   if (showQueue) {
     ctx.font = `bold ${titleFontSize}px sans-serif`;
-    ctx.fillStyle = COLORS.Text;
+    ctx.fillStyle = theme.text;
     ctx.fillText("Queue", rightX + titleInset, queueTitleY);
   }
 
@@ -1658,7 +1682,7 @@ function drawNode(node, ctx) {
   const infoY = maxInfoY < minInfoY ? maxInfoY : Math.max(minInfoY, maxInfoY);
   const baseInfoY = infoY;
   if (controlEntries.length) {
-    ctx.fillStyle = COLORS.Text;
+    ctx.fillStyle = theme.text;
     ctx.font = `bold ${titleFontSize}px sans-serif`;
     const tableY = baseInfoY;
     const tableX = rightX;
@@ -1710,11 +1734,12 @@ function drawNode(node, ctx) {
   }
 
   drawStatusMessage(node, ctx, { boardX, boardY, boardW, boardH, blockSize, bindings });
+  drawToolbar(node, ctx, boardY);
 }
 
 function formatPauseHint(bindings) {
-  const pauseLabel = formatKeyLabel(bindings.pause) || "Pause";
-  const pauseAlt = formatKeyLabel(bindings.pause2);
+  const pauseLabel = formatKeyLabel(bindings.pause?.[0]) || "Pause";
+  const pauseAlt = formatKeyLabel(bindings.pause?.[1]);
   return pauseAlt ? `${pauseLabel} (or ${pauseAlt})` : pauseLabel;
 }
 
@@ -1722,7 +1747,7 @@ function drawPauseOverlay(ctx, node, boardX, boardY, boardW, boardH, blockSize, 
   const { label, sublabel, centerOffsetY } = opts;
   ctx.fillStyle = COLORS.Overlay;
   ctx.fillRect(boardX, boardY, boardW, boardH);
-  ctx.fillStyle = COLORS.Text;
+  ctx.fillStyle = getThemeColors(node).text;
   const statusFont = Math.max(12, Math.floor(blockSize * 0.8));
   const subFont = Math.max(10, Math.floor(blockSize * 0.55));
   const centerY = boardY + boardH / 2 + (centerOffsetY || 0);
@@ -1763,6 +1788,652 @@ function drawStatusMessage(node, ctx, layout) {
   ctx.restore();
 }
 
+function getThemeColors(node) {
+  const config = getConfig(node);
+  const theme = config.theme && config.theme_colors?.[config.theme] ? config.theme : "glass";
+  return config.theme_colors?.[theme] || THEME_PRESETS[theme];
+}
+
+function ensureUiState(node) {
+  if (!node.__tetrisUi) {
+    node.__tetrisUi = {
+      toolbarButtons: [],
+      hoverButton: null,
+      modal: null,
+      captureAction: null,
+    };
+  }
+  return node.__tetrisUi;
+}
+
+function buildToolbarButtons(node, toolbarY) {
+  const btnSize = 24;
+  const gap = 8;
+  const top = toolbarY + (TOOLBAR_H - btnSize) / 2;
+  const leftStart = PADDING + 6;
+  const rightStart = node.size[0] - PADDING - 6;
+  const leftButtons = [
+    { id: "load", label: "L", tooltip: "Load State" },
+    { id: "reset", label: "R", tooltip: "Reset" },
+    { id: "pause", label: "P", tooltip: "Pause/Play" },
+  ];
+  const rightButtons = [
+    { id: "controls", label: "K", tooltip: "Controls" },
+    { id: "colors", label: "C", tooltip: "Colors" },
+    { id: "gameplay", label: "G", tooltip: "Gameplay" },
+    { id: "theme", label: "T", tooltip: "Theme" },
+  ];
+  const buttons = [];
+  let x = leftStart;
+  for (const btn of leftButtons) {
+    buttons.push({ ...btn, x, y: top, w: btnSize, h: btnSize });
+    x += btnSize + gap;
+  }
+  let rightX = rightStart;
+  for (const btn of rightButtons) {
+    rightX -= btnSize;
+    buttons.push({ ...btn, x: rightX, y: top, w: btnSize, h: btnSize });
+    rightX -= gap;
+  }
+  return { buttons, height: TOOLBAR_H, top };
+}
+
+function drawToolbar(node, ctx, boardY) {
+  const ui = ensureUiState(node);
+  const theme = getThemeColors(node);
+  const desiredY = boardY - TOOLBAR_H - 10;
+  const barY = Math.max(HEADER_H + 2, Math.round(desiredY));
+  const { buttons } = buildToolbarButtons(node, barY);
+  ui.toolbarButtons = buttons;
+  const barX = PADDING;
+  const barW = node.size[0] - PADDING * 2;
+  const barH = TOOLBAR_H - 6;
+  ui.toolbarRect = { x: barX, y: barY, w: barW, h: barH };
+  ctx.save();
+  ctx.fillStyle = theme.panel_bg;
+  ctx.strokeStyle = theme.panel_border;
+  ctx.lineWidth = 1;
+  ctx.fillRect(barX, barY, barW, barH);
+  ctx.strokeRect(barX + 0.5, barY + 0.5, barW - 1, barH - 1);
+  ctx.font = "12px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const btn of buttons) {
+    const hovered = ui.hoverButton && ui.hoverButton.id === btn.id;
+    ctx.fillStyle = hovered ? theme.button_hover : theme.button_bg;
+    ctx.fillRect(btn.x, btn.y, btn.w, btn.h);
+    ctx.strokeStyle = theme.panel_border;
+    ctx.strokeRect(btn.x + 0.5, btn.y + 0.5, btn.w - 1, btn.h - 1);
+    ctx.fillStyle = theme.text;
+    ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2 + 0.5);
+  }
+  if (ui.hoverButton?.tooltip) {
+    const tooltip = ui.hoverButton.tooltip;
+    ctx.font = "11px sans-serif";
+    const padding = 6;
+    const width = ctx.measureText(tooltip).width + padding * 2;
+    const height = 20;
+    const tipX = Math.min(node.size[0] - width - 8, ui.hoverButton.x + ui.hoverButton.w / 2 - width / 2);
+    const tipY = barY + barH + 6;
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    ctx.fillRect(tipX, tipY, width, height);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(tooltip, tipX + width / 2, tipY + height / 2 + 0.5);
+  }
+  ctx.restore();
+}
+
+function hitToolbarButton(node, pos, boardY = null) {
+  const ui = ensureUiState(node);
+  if (!ui.toolbarButtons?.length) {
+    const fallbackY = boardY ?? node.__tetrisLastLayout?.boardY ?? (HEADER_H + TOOLBAR_H + 10);
+    const metrics = buildToolbarButtons(node, Math.max(HEADER_H + 2, fallbackY - TOOLBAR_H - 10));
+    ui.toolbarButtons = metrics.buttons;
+  }
+  const [x, y] = pos;
+  return ui.toolbarButtons.find(
+    (btn) => x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h,
+  );
+}
+
+function handleToolbarClick(node, pos) {
+  const btn = hitToolbarButton(node, pos, node.__tetrisLastLayout?.boardY);
+  if (!btn) return false;
+  if (btn.id === "reset") {
+    resetNode(node);
+    return true;
+  }
+  if (btn.id === "pause") {
+    togglePause(node);
+    return true;
+  }
+  if (btn.id === "load") {
+    openLoadStateModal(node);
+    return true;
+  }
+  if (btn.id === "controls") {
+    openControlsModal(node);
+    return true;
+  }
+  if (btn.id === "colors") {
+    openColorsModal(node);
+    return true;
+  }
+  if (btn.id === "theme") {
+    openThemeModal(node);
+    return true;
+  }
+  if (btn.id === "gameplay") {
+    openGameplayModal(node);
+    return true;
+  }
+  return false;
+}
+
+function closeModal(node) {
+  const ui = ensureUiState(node);
+  if (ui.modal?.el) {
+    ui.modal.el.remove();
+  }
+  ui.modal = null;
+  ui.captureAction = null;
+}
+
+function pauseForModal(node) {
+  const live = node.__tetrisLive;
+  if (!live) return;
+  live.state.running = false;
+  live.state.showBoardWhilePaused = true;
+  node.setDirtyCanvas(true, true);
+}
+
+function createModalBase(node, title) {
+  closeModal(node);
+  pauseForModal(node);
+  const theme = getThemeColors(node);
+  const modal = document.createElement("div");
+  modal.style.position = "fixed";
+  modal.style.left = "50%";
+  modal.style.top = "50%";
+  modal.style.transform = "translate(-50%, -50%)";
+  modal.style.minWidth = "360px";
+  modal.style.maxWidth = "70vw";
+  modal.style.maxHeight = "70vh";
+  modal.style.background = theme.panel_bg;
+  modal.style.border = `1px solid ${theme.panel_border}`;
+  modal.style.boxShadow = `0 10px 30px ${theme.panel_shadow}`;
+  modal.style.color = theme.text;
+  modal.style.backdropFilter = "blur(10px)";
+  modal.style.padding = "12px";
+  modal.style.borderRadius = "10px";
+  modal.style.zIndex = "9999";
+  modal.style.display = "flex";
+  modal.style.flexDirection = "column";
+  modal.style.gap = "10px";
+
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+  header.style.cursor = "move";
+  header.style.fontWeight = "600";
+  header.textContent = title;
+
+  const closeBtn = document.createElement("button");
+  closeBtn.textContent = "X";
+  closeBtn.style.marginLeft = "12px";
+  closeBtn.style.border = "none";
+  closeBtn.style.background = "transparent";
+  closeBtn.style.color = theme.text;
+  closeBtn.style.cursor = "pointer";
+  closeBtn.addEventListener("click", () => closeModal(node));
+  header.appendChild(closeBtn);
+
+  const body = document.createElement("div");
+  body.style.overflow = "auto";
+  body.style.display = "flex";
+  body.style.flexDirection = "column";
+  body.style.gap = "8px";
+
+  modal.appendChild(header);
+  modal.appendChild(body);
+  document.body.appendChild(modal);
+
+  let drag = null;
+  header.addEventListener("mousedown", (event) => {
+    drag = {
+      startX: event.clientX,
+      startY: event.clientY,
+      rect: modal.getBoundingClientRect(),
+    };
+    event.preventDefault();
+  });
+  window.addEventListener("mousemove", (event) => {
+    if (!drag) return;
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    modal.style.left = `${drag.rect.left + dx}px`;
+    modal.style.top = `${drag.rect.top + dy}px`;
+    modal.style.transform = "translate(0, 0)";
+  });
+  window.addEventListener("mouseup", () => {
+    drag = null;
+  });
+
+  ensureUiState(node).modal = { el: modal, body, title };
+  return { modal, body };
+}
+
+function openLoadStateModal(node) {
+  const { body } = createModalBase(node, "Load State");
+  const textarea = document.createElement("textarea");
+  textarea.style.width = "100%";
+  textarea.style.minHeight = "140px";
+  textarea.placeholder = "Paste state JSON here...";
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.gap = "8px";
+  const loadBtn = document.createElement("button");
+  loadBtn.textContent = "Load";
+  loadBtn.addEventListener("click", () => {
+    loadStateFromText(node, textarea.value);
+  });
+  const closeBtn = document.createElement("button");
+  closeBtn.textContent = "Close";
+  closeBtn.addEventListener("click", () => closeModal(node));
+  actions.append(loadBtn, closeBtn);
+  body.append(textarea, actions);
+}
+
+function openControlsModal(node) {
+  const { body } = createModalBase(node, "Controls");
+  renderControlsModal(node, body);
+}
+
+function renderControlsModal(node, body) {
+  body.innerHTML = "";
+  const ui = ensureUiState(node);
+  const config = getConfig(node);
+  const actions = [
+    { id: "move_left", label: "Move Left" },
+    { id: "move_right", label: "Move Right" },
+    { id: "rotate_cw", label: "Rotate CW" },
+    { id: "rotate_ccw", label: "Rotate CCW" },
+    { id: "soft_drop", label: "Soft Drop" },
+    { id: "hard_drop", label: "Hard Drop" },
+    { id: "hold", label: "Hold" },
+    { id: "reset", label: "Reset" },
+    { id: "pause", label: "Pause" },
+  ];
+  const hint = document.createElement("div");
+  hint.style.fontSize = "12px";
+  hint.style.opacity = "0.8";
+  hint.textContent = ui.captureAction
+    ? `Press a key for ${actions.find((a) => a.id === ui.captureAction)?.label || ""} (Esc to cancel)`
+    : "Click Add to capture a key binding.";
+  body.appendChild(hint);
+  if (ui.captureAction) {
+    const cancel = document.createElement("button");
+    cancel.textContent = "Cancel Capture";
+    cancel.addEventListener("click", () => {
+      ui.captureAction = null;
+      renderControlsModal(node, body);
+    });
+    body.appendChild(cancel);
+  }
+
+  actions.forEach((action) => {
+    const row = document.createElement("div");
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = "120px 1fr auto auto";
+    row.style.gap = "8px";
+    row.style.alignItems = "center";
+    const label = document.createElement("div");
+    label.textContent = action.label;
+    const keys = document.createElement("div");
+    keys.style.display = "flex";
+    keys.style.gap = "6px";
+    keys.style.flexWrap = "wrap";
+    const values = Array.isArray(config.bindings[action.id]) ? config.bindings[action.id] : [];
+    values.forEach((value) => {
+      const chip = document.createElement("div");
+      chip.style.display = "flex";
+      chip.style.alignItems = "center";
+      chip.style.gap = "4px";
+      chip.style.padding = "2px 6px";
+      chip.style.borderRadius = "10px";
+      chip.style.background = "rgba(255,255,255,0.08)";
+      const text = document.createElement("span");
+      text.textContent = formatKeyLabel(value);
+      const remove = document.createElement("button");
+      remove.textContent = "X";
+      remove.style.border = "none";
+      remove.style.background = "transparent";
+      remove.style.cursor = "pointer";
+      remove.addEventListener("click", () => {
+        updateConfig(node, (next) => {
+          next.bindings[action.id] = next.bindings[action.id].filter((k) => k !== value);
+          return next;
+        });
+        updateBackendState(node);
+        renderControlsModal(node, body);
+      });
+      chip.append(text, remove);
+      keys.appendChild(chip);
+    });
+    const addBtn = document.createElement("button");
+    addBtn.textContent = "Add";
+    addBtn.addEventListener("click", () => {
+      ui.captureAction = action.id;
+      renderControlsModal(node, body);
+    });
+    const resetBtn = document.createElement("button");
+    resetBtn.textContent = "Reset";
+    resetBtn.addEventListener("click", () => {
+      updateConfig(node, (next) => {
+        next.bindings[action.id] = cloneDeep(DEFAULT_CONFIG.bindings[action.id]);
+        return next;
+      });
+      updateBackendState(node);
+      renderControlsModal(node, body);
+    });
+    row.append(label, keys, addBtn, resetBtn);
+    body.appendChild(row);
+  });
+}
+
+function openColorsModal(node) {
+  const { body } = createModalBase(node, "Colors");
+  renderColorsModal(node, body);
+}
+
+function renderColorsModal(node, body) {
+  body.innerHTML = "";
+  const config = getConfig(node);
+  const items = [
+    { id: "color_i", label: "I" },
+    { id: "color_j", label: "J" },
+    { id: "color_l", label: "L" },
+    { id: "color_o", label: "O" },
+    { id: "color_s", label: "S" },
+    { id: "color_t", label: "T" },
+    { id: "color_z", label: "Z" },
+    { id: "background_color", label: "Background", alpha: false },
+    { id: "grid_color", label: "Grid", alpha: true, target: "grid_color" },
+  ];
+  items.forEach((item) => {
+    const row = document.createElement("div");
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = "120px 1fr auto";
+    row.style.gap = "8px";
+    row.style.alignItems = "center";
+    const label = document.createElement("div");
+    label.textContent = item.label;
+    const swatch = document.createElement("div");
+    const value =
+      item.id === "grid_color" ? config.grid_color : config.colors[item.id];
+    swatch.style.width = "100%";
+    swatch.style.height = "18px";
+    swatch.style.border = "1px solid rgba(255,255,255,0.2)";
+    swatch.style.background = value || "#000";
+    const btn = document.createElement("button");
+    btn.textContent = "Pick";
+    btn.addEventListener("click", () => {
+      openColorPicker(node, value, item.alpha !== false, (nextValue) => {
+        updateConfig(node, (next) => {
+          if (item.id === "grid_color") {
+            next.grid_color = nextValue;
+          } else {
+            next.colors[item.id] = nextValue;
+          }
+          return next;
+        });
+        updateBackendState(node);
+        renderColorsModal(node, body);
+      });
+    });
+    row.append(label, swatch, btn);
+    body.appendChild(row);
+  });
+}
+
+function openThemeModal(node) {
+  const { body } = createModalBase(node, "Theme");
+  renderThemeModal(node, body);
+}
+
+function renderThemeModal(node, body) {
+  body.innerHTML = "";
+  const config = getConfig(node);
+  const themeRow = document.createElement("div");
+  themeRow.style.display = "flex";
+  themeRow.style.gap = "8px";
+  ["glass", "flat", "neon", "minimal"].forEach((theme) => {
+    const btn = document.createElement("button");
+    btn.textContent = theme;
+    btn.disabled = config.theme === theme;
+    btn.addEventListener("click", () => {
+      updateConfig(node, (next) => {
+        next.theme = theme;
+        return next;
+      });
+      renderThemeModal(node, body);
+      node.setDirtyCanvas(true, true);
+    });
+    themeRow.appendChild(btn);
+  });
+  const resetBtn = document.createElement("button");
+  resetBtn.textContent = "Reset All Theme Colors";
+  resetBtn.addEventListener("click", () => {
+    updateConfig(node, (next) => {
+      next.theme_colors = cloneDeep(DEFAULT_CONFIG.theme_colors);
+      return next;
+    });
+    renderThemeModal(node, body);
+    node.setDirtyCanvas(true, true);
+  });
+  body.append(themeRow, resetBtn);
+
+  const themeColors = config.theme_colors?.[config.theme] || THEME_PRESETS[config.theme];
+  Object.entries(themeColors).forEach(([key, value]) => {
+    const row = document.createElement("div");
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = "150px 1fr auto";
+    row.style.gap = "8px";
+    row.style.alignItems = "center";
+    const label = document.createElement("div");
+    label.textContent = key.replace("_", " ");
+    const swatch = document.createElement("div");
+    swatch.style.width = "100%";
+    swatch.style.height = "18px";
+    swatch.style.border = "1px solid rgba(255,255,255,0.2)";
+    swatch.style.background = value;
+    const btn = document.createElement("button");
+    btn.textContent = "Pick";
+    btn.addEventListener("click", () => {
+      openColorPicker(node, value, true, (nextValue) => {
+        updateConfig(node, (next) => {
+          next.theme_colors[config.theme][key] = nextValue;
+          return next;
+        });
+        renderThemeModal(node, body);
+        node.setDirtyCanvas(true, true);
+      });
+    });
+    row.append(label, swatch, btn);
+    body.appendChild(row);
+  });
+}
+
+function openGameplayModal(node) {
+  const { body } = createModalBase(node, "Gameplay");
+  renderGameplayModal(node, body);
+}
+
+function renderGameplayModal(node, body) {
+  body.innerHTML = "";
+  const config = getConfig(node);
+  const checkbox = (labelText, key) => {
+    const row = document.createElement("label");
+    row.style.display = "flex";
+    row.style.gap = "8px";
+    row.style.alignItems = "center";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = !!config[key];
+    input.addEventListener("change", () => {
+      updateConfig(node, (next) => {
+        next[key] = input.checked;
+        return next;
+      });
+      updateBackendState(node);
+      node.setDirtyCanvas(true, true);
+    });
+    row.append(input, document.createTextNode(labelText));
+    body.appendChild(row);
+  };
+  checkbox("Show Controls", "show_controls");
+  checkbox("Ghost Piece", "ghost_piece");
+  checkbox("Next Piece", "next_piece");
+  checkbox("Hold Queue", "hold_queue");
+  checkbox("Grid", "grid_enabled");
+
+  const selectRow = (labelText, key, options) => {
+    const row = document.createElement("div");
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = "140px 1fr";
+    row.style.gap = "8px";
+    const label = document.createElement("div");
+    label.textContent = labelText;
+    const select = document.createElement("select");
+    options.forEach((value) => {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = value;
+      if (`${config[key]}` === value) opt.selected = true;
+      select.appendChild(opt);
+    });
+    select.addEventListener("change", () => {
+      updateConfig(node, (next) => {
+        next[key] = select.value;
+        return next;
+      });
+      updateBackendState(node);
+    });
+    row.append(label, select);
+    body.appendChild(row);
+  };
+
+  selectRow("Lock Down", "lock_down_mode", ["extended", "infinite", "classic"]);
+  selectRow("Level Progression", "level_progression", ["fixed", "variable"]);
+
+  const numberRow = (labelText, key, min, max) => {
+    const row = document.createElement("div");
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = "140px 1fr";
+    row.style.gap = "8px";
+    const label = document.createElement("div");
+    label.textContent = labelText;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = min;
+    input.max = max;
+    input.value = config[key];
+    input.addEventListener("change", () => {
+      updateConfig(node, (next) => {
+        next[key] = Number.parseInt(input.value, 10);
+        return next;
+      });
+      updateBackendState(node);
+    });
+    row.append(label, input);
+    body.appendChild(row);
+  };
+
+  numberRow("Start Level", "start_level", 1, 15);
+  numberRow("Queue Size", "queue_size", 0, 6);
+}
+
+function openColorPicker(node, value, allowAlpha, onApply) {
+  const overlay = document.createElement("div");
+  overlay.style.position = "fixed";
+  overlay.style.inset = "0";
+  overlay.style.background = "rgba(0,0,0,0.4)";
+  overlay.style.zIndex = "10000";
+  const dialog = document.createElement("div");
+  dialog.style.position = "fixed";
+  dialog.style.left = "50%";
+  dialog.style.top = "50%";
+  dialog.style.transform = "translate(-50%, -50%)";
+  dialog.style.padding = "12px";
+  dialog.style.borderRadius = "10px";
+  dialog.style.background = "rgba(24,24,30,0.92)";
+  dialog.style.color = "#fff";
+  dialog.style.display = "flex";
+  dialog.style.flexDirection = "column";
+  dialog.style.gap = "8px";
+  const components = parseColorComponents(value);
+  const colorInput = document.createElement("input");
+  colorInput.type = "color";
+  colorInput.value = rgbToHex(components.r, components.g, components.b);
+  const alphaInput = document.createElement("input");
+  alphaInput.type = "range";
+  alphaInput.min = "0";
+  alphaInput.max = "1";
+  alphaInput.step = "0.01";
+  alphaInput.value = `${components.a}`;
+  alphaInput.disabled = !allowAlpha;
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.gap = "8px";
+  const apply = document.createElement("button");
+  apply.textContent = "Apply";
+  const cancel = document.createElement("button");
+  cancel.textContent = "Cancel";
+  actions.append(apply, cancel);
+  dialog.append(colorInput, alphaInput, actions);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+  cancel.addEventListener("click", () => overlay.remove());
+  apply.addEventListener("click", () => {
+    const hex = colorInput.value;
+    const { r, g, b } = hexToRgb(hex);
+    const alpha = allowAlpha ? Number.parseFloat(alphaInput.value) : 1;
+    const next = allowAlpha && alpha < 1 ? `rgba(${r},${g},${b},${alpha})` : rgbToHex(r, g, b);
+    onApply(next);
+    overlay.remove();
+  });
+}
+
+function parseColorComponents(value) {
+  const rgba = parseRgbaString(value || "");
+  if (rgba) {
+    const parts = rgba
+      .replace(/rgba?\(|\)/g, "")
+      .split(",")
+      .map((v) => Number.parseFloat(v.trim()));
+    return { r: parts[0] || 0, g: parts[1] || 0, b: parts[2] || 0, a: parts[3] ?? 1 };
+  }
+  if (typeof value === "string" && value.trim().startsWith("#")) {
+    const { r, g, b } = hexToRgb(value.trim());
+    return { r, g, b, a: 1 };
+  }
+  return { r: 255, g: 255, b: 255, a: 1 };
+}
+
+function hexToRgb(hex) {
+  const trimmed = hex.replace("#", "");
+  const r = Number.parseInt(trimmed.slice(0, 2), 16);
+  const g = Number.parseInt(trimmed.slice(2, 4), 16);
+  const b = Number.parseInt(trimmed.slice(4, 6), 16);
+  return { r, g, b };
+}
+
+function rgbToHex(r, g, b) {
+  const toHex = (value) => value.toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
 function ensureBackgroundUpdater(node) {
   const live = node.__tetrisLive;
   if (!live || live.bgTimer) return;
@@ -1775,44 +2446,33 @@ function ensureBackgroundUpdater(node) {
   }, 250);
 }
 
-function applyStateInput(node, { force = false } = {}) {
+function loadStateFromText(node, text) {
   const live = node.__tetrisLive;
   if (!live) return;
-  if (!force && !node.__tetrisApplyStateRequested) return;
-  const incoming = getInputString(node, "state_in");
-  if (!incoming || !incoming.trim()) {
+  if (!text || !text.trim()) {
     setStatusMessage(node, "No state input found.", "error");
-    node.__tetrisApplyStateRequested = false;
-    return;
-  }
-  if (!force && node.__tetrisStateInValue === incoming) {
-    node.__tetrisApplyStateRequested = false;
     return;
   }
   let parsed = null;
   try {
-    parsed = JSON.parse(incoming);
+    parsed = JSON.parse(text);
   } catch {
     setStatusMessage(node, "Invalid state JSON.", "error");
-    node.__tetrisApplyStateRequested = false;
     return;
   }
   const validationError = validateStatePayload(parsed);
   if (validationError) {
     setStatusMessage(node, validationError, "error");
-    node.__tetrisApplyStateRequested = false;
     return;
   }
   const seed = getSeedValue(node, { allowRandomize: false });
   const startLevel = getStartLevel(node);
   const progression = getLevelProgression(node);
-  const hydrated = hydrateState(incoming, seed ?? 0, startLevel, progression);
+  const hydrated = hydrateState(text, seed ?? 0, startLevel, progression);
   if (!hydrated) {
     setStatusMessage(node, "Failed to load state.", "error");
-    node.__tetrisApplyStateRequested = false;
     return;
   }
-  node.__tetrisStateInValue = incoming;
   node.__tetrisLive.state = hydrated;
   node.__tetrisLive.state.started = true;
   node.__tetrisLive.state.running = false;
@@ -1823,7 +2483,6 @@ function applyStateInput(node, { force = false } = {}) {
   updateBackendState(node);
   node.setDirtyCanvas(true, true);
   setStatusMessage(node, "State loaded.", "success");
-  node.__tetrisApplyStateRequested = false;
 }
 
 function validateStatePayload(payload) {
@@ -1861,7 +2520,6 @@ function resetInputState(state) {
 }
 
 function syncSeed(state, node) {
-  if (getInputString(node, "state_in")) return;
   const nextSeed = getSeedValue(node, { allowRandomize: false });
   if (Number.isInteger(nextSeed)) {
     if (nextSeed !== state.seed) {
@@ -1884,40 +2542,14 @@ function syncSeed(state, node) {
 
 function getStartLevel(node) {
   const defaultValue = 1;
-  const parseLevel = (value) => {
-    const parsed = Number.parseInt(`${value}`, 10);
-    if (!Number.isFinite(parsed)) return null;
-    return clampLevel(parsed);
-  };
-  const linked = getLinkedOptionsNode(node);
-  if (linked?.widgets) {
-    const widget = linked.widgets.find((w) => w.name === "start_level");
-    const parsed = parseLevel(widget?.value);
-    if (parsed != null) return parsed;
-  }
-  if (node?.widgets) {
-    const widget = node.widgets.find((w) => w.name === "start_level");
-    const parsed = parseLevel(widget?.value);
-    if (parsed != null) return parsed;
-  }
-  return defaultValue;
+  const parsed = Number.parseInt(`${getConfig(node).start_level}`, 10);
+  if (!Number.isFinite(parsed)) return defaultValue;
+  return clampLevel(parsed);
 }
 
 function getLevelProgression(node) {
-  const normalize = (value) => {
-    const raw = `${value}`.trim().toLowerCase();
-    if (raw === "variable") return "variable";
-    return "fixed";
-  };
-  const linked = getLinkedOptionsNode(node);
-  if (linked?.widgets) {
-    const widget = linked.widgets.find((w) => w.name === "level_progression");
-    if (widget) return normalize(widget.value);
-  }
-  if (node?.widgets) {
-    const widget = node.widgets.find((w) => w.name === "level_progression");
-    if (widget) return normalize(widget.value);
-  }
+  const raw = `${getConfig(node).level_progression || ""}`.trim().toLowerCase();
+  if (raw === "variable") return "variable";
   return "fixed";
 }
 
@@ -2064,12 +2696,56 @@ function handleKey(event) {
   if (!node) return;
   const live = node.__tetrisLive;
   if (!live) return;
+  const ui = node.__tetrisUi;
+  if (ui?.captureAction) {
+    if (event.key && event.key.toLowerCase() === "escape") {
+      ui.captureAction = null;
+      if (ui.modal?.body) {
+        renderControlsModal(node, ui.modal.body);
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    const binding = bindingFromEvent(event);
+    if (!binding) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    updateConfig(node, (next) => {
+      const list = Array.isArray(next.bindings[ui.captureAction])
+        ? next.bindings[ui.captureAction]
+        : [];
+      if (!list.includes(binding)) {
+        list.push(binding);
+      }
+      next.bindings[ui.captureAction] = list.slice(0, 5);
+      return next;
+    });
+    updateBackendState(node);
+    ui.captureAction = null;
+    if (ui.modal?.body) {
+      renderControlsModal(node, ui.modal.body);
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  if (ui?.modal) {
+    if (event.key && event.key.toLowerCase() === "escape") {
+      closeModal(node);
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    return;
+  }
 
   const state = live.state;
   const bindings = getControlBindings(node);
   const matches = (binding) => keyMatches(event, binding);
-  const resetPressed = matches(bindings.reset) || matches(bindings.reset2);
-  const pausePressed = matches(bindings.pause) || matches(bindings.pause2);
+  const resetPressed = matches(bindings.reset);
+  const pausePressed = matches(bindings.pause);
   if (state.gameOver) {
     if (resetPressed || pausePressed) {
       resetNode(node);
@@ -2081,25 +2757,14 @@ function handleKey(event) {
   if (
     event.repeat
     && (matches(bindings.rotateCw)
-      || matches(bindings.rotateCw2)
-      || matches(bindings.rotateCw3)
-      || matches(bindings.rotateCw4)
-      || matches(bindings.rotateCw5)
       || matches(bindings.rotateCcw)
-      || matches(bindings.rotateCcw2)
-      || matches(bindings.rotateCcw3)
-      || matches(bindings.rotateCcw4)
       || matches(bindings.moveLeft)
-      || matches(bindings.moveLeft2)
       || matches(bindings.moveRight)
-      || matches(bindings.moveRight2)
       || matches(bindings.softDrop)
-      || matches(bindings.softDrop2)
       || matches(bindings.hardDrop)
-      || matches(bindings.hardDrop2)
       || matches(bindings.hold)
-      || matches(bindings.hold2)
-      || matches(bindings.hold3))
+      || matches(bindings.reset)
+      || matches(bindings.pause))
   ) {
     event.preventDefault();
     event.stopPropagation();
@@ -2108,48 +2773,35 @@ function handleKey(event) {
   const canAct =
     state.running ||
     matches(bindings.pause) ||
-    matches(bindings.pause2) ||
-    matches(bindings.reset) ||
-    matches(bindings.reset2);
+    matches(bindings.reset);
   if (!canAct) return;
   let handled = true;
-  if (matches(bindings.moveLeft) || matches(bindings.moveLeft2)) {
+  if (matches(bindings.moveLeft)) {
     state.moveHeldLeft = true;
     setMoveDirection(state, "left");
     if (move(state, -1, 0)) applyLockModeAfterAction(state, getLockMode(node));
-  } else if (matches(bindings.moveRight) || matches(bindings.moveRight2)) {
+  } else if (matches(bindings.moveRight)) {
     state.moveHeldRight = true;
     setMoveDirection(state, "right");
     if (move(state, 1, 0)) applyLockModeAfterAction(state, getLockMode(node));
-  } else if (
-    matches(bindings.rotateCw)
-    || matches(bindings.rotateCw2)
-    || matches(bindings.rotateCw3)
-    || matches(bindings.rotateCw4)
-    || matches(bindings.rotateCw5)
-  ) {
+  } else if (matches(bindings.rotateCw)) {
     if (rotate(state, 1)) {
       applyLockModeAfterAction(state, getLockMode(node));
     }
-  } else if (
-    matches(bindings.rotateCcw)
-    || matches(bindings.rotateCcw2)
-    || matches(bindings.rotateCcw3)
-    || matches(bindings.rotateCcw4)
-  ) {
+  } else if (matches(bindings.rotateCcw)) {
     if (rotate(state, -1)) {
       applyLockModeAfterAction(state, getLockMode(node));
     }
-  } else if (matches(bindings.softDrop) || matches(bindings.softDrop2)) {
+  } else if (matches(bindings.softDrop)) {
     state.softDrop = true;
     state.dropMs = Math.max(1, Math.floor(state.baseDropMs / 20));
-  } else if (matches(bindings.hardDrop) || matches(bindings.hardDrop2)) {
+  } else if (matches(bindings.hardDrop)) {
     hardDrop(state);
-  } else if (matches(bindings.hold) || matches(bindings.hold2) || matches(bindings.hold3)) {
+  } else if (matches(bindings.hold)) {
     holdPiece(state);
-  } else if (matches(bindings.reset) || matches(bindings.reset2)) {
+  } else if (matches(bindings.reset)) {
     resetNode(node);
-  } else if (matches(bindings.pause) || matches(bindings.pause2)) {
+  } else if (matches(bindings.pause)) {
     togglePause(node);
   } else {
     handled = false;
@@ -2169,9 +2821,10 @@ function handleKeyUp(event) {
   if (!node) return;
   const live = node.__tetrisLive;
   if (!live || live.state.gameOver) return;
+  if (node.__tetrisUi?.modal) return;
   const bindings = getControlBindings(node);
   const matches = (binding) => keyMatches(event, binding);
-  if (matches(bindings.moveLeft) || matches(bindings.moveLeft2)) {
+  if (matches(bindings.moveLeft)) {
     live.state.moveHeldLeft = false;
     if (live.state.moveHeldRight) {
       setMoveDirection(live.state, "right");
@@ -2179,7 +2832,7 @@ function handleKeyUp(event) {
       clearMoveDirection(live.state);
     }
   }
-  if (matches(bindings.moveRight) || matches(bindings.moveRight2)) {
+  if (matches(bindings.moveRight)) {
     live.state.moveHeldRight = false;
     if (live.state.moveHeldLeft) {
       setMoveDirection(live.state, "left");
@@ -2187,7 +2840,7 @@ function handleKeyUp(event) {
       clearMoveDirection(live.state);
     }
   }
-  if (!matches(bindings.softDrop) && !matches(bindings.softDrop2)) return;
+  if (!matches(bindings.softDrop)) return;
   live.state.softDrop = false;
   live.state.dropMs = live.state.baseDropMs;
 }
@@ -2212,62 +2865,6 @@ function applyWidgetHiding(node) {
     node.__tetrisWidgetsHidden = true;
     node.setDirtyCanvas(true, true);
   }
-}
-
-function ensureOptionsDivider(node) {
-  if (!node?.widgets) return;
-  let insertAfter = node.widgets.findIndex((w) => w.name === "pause_2");
-  if (insertAfter < 0) {
-    insertAfter = node.widgets.findIndex((w) => w.name === "pause");
-  }
-  if (insertAfter < 0) return;
-  const existingIndex = node.widgets.findIndex((w) => w.name === "divider");
-  const divider = {
-    type: "tetrinode_divider",
-    name: "divider",
-    draw(ctx, _, width, y, _height) {
-      ctx.strokeStyle = "rgba(235,235,235,0.25)";
-      ctx.beginPath();
-      const lineY = y + 4;
-      ctx.moveTo(10, lineY);
-      ctx.lineTo(width - 10, lineY);
-      ctx.stroke();
-    },
-    computeSize(width) {
-      return [width, 12];
-    },
-  };
-  if (existingIndex >= 0) {
-    node.widgets.splice(existingIndex, 1);
-  }
-  node.widgets.splice(insertAfter + 1, 0, divider);
-  node.__tetrisDividerAdded = true;
-  node.setDirtyCanvas(true, true);
-}
-
-function ensureGhostDivider(node) {
-  if (!node?.widgets) return;
-  if (node.__tetrisGhostDividerAdded) return;
-  const bgIndex = node.widgets.findIndex((w) => w.name === "background_color");
-  if (bgIndex < 0) return;
-  const divider = {
-    type: "tetrinode_divider",
-    name: "divider_ghost",
-    draw(ctx, _, width, y, _height) {
-      ctx.strokeStyle = "rgba(235,235,235,0.25)";
-      ctx.beginPath();
-      const lineY = y + 4;
-      ctx.moveTo(10, lineY);
-      ctx.lineTo(width - 10, lineY);
-      ctx.stroke();
-    },
-    computeSize(width) {
-      return [width, 12];
-    },
-  };
-  node.widgets.splice(bgIndex + 1, 0, divider);
-  node.__tetrisGhostDividerAdded = true;
-  node.setDirtyCanvas(true, true);
 }
 
 function isValidLinkId(link) {
@@ -2390,181 +2987,76 @@ function getSeedValue(node, options = {}) {
   return fallback != null ? fallback : 0;
 }
 
+function normalizeBindingValue(value) {
+  if (!value) return null;
+  const rawValue = `${value}`;
+  if (rawValue === " ") return " ";
+  const raw = rawValue.trim().toLowerCase();
+  if (!raw) return null;
+  if (raw === "space" || raw === "spacebar") return " ";
+  if (raw === "backslash") return "\\";
+  if (raw === "slash" || raw === "forwardslash") return "/";
+  if (raw === "control" || raw === "ctrl") return "control";
+  if (raw === "shift") return "shift";
+  if (raw === "none" || raw === "null") return null;
+  return raw;
+}
+
 function getControlBindings(node) {
-  const defaultBindings = {
-    moveLeft: "arrowleft",
-    moveLeft2: "numpad4",
-    moveRight: "arrowright",
-    moveRight2: "numpad6",
-    rotateCw: "arrowup",
-    rotateCw2: "numpad5",
-    rotateCw3: "x",
-    rotateCw4: "numpad1",
-    rotateCw5: "numpad9",
-    rotateCcw: "control",
-    rotateCcw2: "numpad3",
-    rotateCcw3: "z",
-    rotateCcw4: "numpad7",
-    softDrop: "arrowdown",
-    softDrop2: "numpad2",
-    hardDrop: " ",
-    hardDrop2: "numpad8",
-    hold: "shift",
-    hold2: "numpad0",
-    hold3: "c",
-    reset: "r",
-    reset2: "none",
-    pause: "escape",
-    pause2: "f1",
-  };
-  if (!node) return defaultBindings;
-  const linked = getLinkedOptionsNode(node);
-  if (!linked) return defaultBindings;
-  const normalizeKey = (value) => {
-    const rawValue = `${value}`;
-    if (rawValue === " ") return " ";
-    const raw = rawValue.trim().toLowerCase();
-    if (!raw) return raw;
-    if (raw === "space" || raw === "spacebar") return " ";
-    if (raw === "backslash") return "\\";
-    if (raw === "slash") return "/";
-    if (raw === "forwardslash") return "/";
-    if (raw === "control" || raw === "ctrl") return "control";
-    if (raw === "shift") return "shift";
-    if (raw === "f1") return "f1";
-    if (raw === "none") return null;
-    return raw;
-  };
-  const lookup = (name, fallback) => {
-    if (linked?.widgets) {
-      const widget = linked.widgets.find((w) => w.name === name);
-      if (widget && typeof widget.value === "string") {
-        const trimmed = widget.value.trim();
-        if (trimmed) return normalizeKey(trimmed);
-      }
-    }
-    if (node.widgets) {
-      const widget = node.widgets.find((w) => w.name === name);
-      if (widget && typeof widget.value === "string") {
-        const trimmed = widget.value.trim();
-        if (trimmed) return normalizeKey(trimmed);
-      }
-    }
-    return normalizeKey(fallback);
-  };
-  const primary = (name, fallback) => lookup(name, fallback);
-  const secondary = (name, fallback) => lookup(name, fallback);
+  const config = getConfig(node);
+  const normalizeList = (values) =>
+    (Array.isArray(values) ? values : [values])
+      .map((value) => normalizeBindingValue(value))
+      .filter((value) => value);
   return {
-    moveLeft: primary("move_left", defaultBindings.moveLeft),
-    moveLeft2: secondary("move_left_2", defaultBindings.moveLeft2),
-    moveRight: primary("move_right", defaultBindings.moveRight),
-    moveRight2: secondary("move_right_2", defaultBindings.moveRight2),
-    rotateCw: primary("rotate_cw", defaultBindings.rotateCw),
-    rotateCw2: secondary("rotate_cw_2", defaultBindings.rotateCw2),
-    rotateCw3: primary("rotate_cw_3", defaultBindings.rotateCw3),
-    rotateCw4: primary("rotate_cw_4", defaultBindings.rotateCw4),
-    rotateCw5: primary("rotate_cw_5", defaultBindings.rotateCw5),
-    rotateCcw: primary("rotate_ccw", defaultBindings.rotateCcw),
-    rotateCcw2: secondary("rotate_ccw_2", defaultBindings.rotateCcw2),
-    rotateCcw3: primary("rotate_ccw_3", defaultBindings.rotateCcw3),
-    rotateCcw4: primary("rotate_ccw_4", defaultBindings.rotateCcw4),
-    softDrop: primary("soft_drop", defaultBindings.softDrop),
-    softDrop2: secondary("soft_drop_2", defaultBindings.softDrop2),
-    hardDrop: primary("hard_drop", defaultBindings.hardDrop),
-    hardDrop2: secondary("hard_drop_2", defaultBindings.hardDrop2),
-    hold: primary("hold", defaultBindings.hold),
-    hold2: secondary("hold_2", defaultBindings.hold2),
-    hold3: primary("hold_3", defaultBindings.hold3),
-    reset: primary("reset", defaultBindings.reset),
-    reset2: secondary("reset_2", defaultBindings.reset2),
-    pause: primary("pause", defaultBindings.pause),
-    pause2: secondary("pause_2", defaultBindings.pause2),
+    moveLeft: normalizeList(config.bindings.move_left),
+    moveRight: normalizeList(config.bindings.move_right),
+    rotateCw: normalizeList(config.bindings.rotate_cw),
+    rotateCcw: normalizeList(config.bindings.rotate_ccw),
+    softDrop: normalizeList(config.bindings.soft_drop),
+    hardDrop: normalizeList(config.bindings.hard_drop),
+    hold: normalizeList(config.bindings.hold),
+    reset: normalizeList(config.bindings.reset),
+    pause: normalizeList(config.bindings.pause),
   };
 }
 
 function getQueueSize(node) {
-  const clamp = (value) => {
-    const parsed = Number.parseInt(`${value}`, 10);
-    if (!Number.isFinite(parsed)) return null;
-    return Math.max(0, Math.min(6, parsed));
-  };
-  const linked = getLinkedOptionsNode(node);
-  if (linked?.widgets) {
-    const widget = linked.widgets.find((w) => w.name === "queue_size");
-    const parsed = clamp(widget?.value);
-    if (parsed != null) return parsed;
-  }
-  if (node?.widgets) {
-    const widget = node.widgets.find((w) => w.name === "queue_size");
-    const parsed = clamp(widget?.value);
-    if (parsed != null) return parsed;
-  }
-  return 6;
-}
-
-function getBoolOption(node, name, defaultValue) {
-  const coerce = (value) => {
-    if (typeof value === "boolean") return value;
-    if (typeof value === "string") {
-      const raw = value.trim().toLowerCase();
-      if (raw === "true") return true;
-      if (raw === "false") return false;
-    }
-    return null;
-  };
-  const linked = getLinkedOptionsNode(node);
-  if (linked?.widgets) {
-    const widget = linked.widgets.find((w) => w.name === name);
-    const parsed = coerce(widget?.value);
-    if (parsed != null) return parsed;
-  }
-  if (node?.widgets) {
-    const widget = node.widgets.find((w) => w.name === name);
-    const parsed = coerce(widget?.value);
-    if (parsed != null) return parsed;
-  }
-  return defaultValue;
+  const parsed = Number.parseInt(`${getConfig(node).queue_size}`, 10);
+  if (!Number.isFinite(parsed)) return 6;
+  return Math.max(0, Math.min(6, parsed));
 }
 
 function getHoldEnabled(node) {
-  return getBoolOption(node, "hold_queue", true);
+  return !!getConfig(node).hold_queue;
 }
 
 function getNextPieceEnabled(node) {
-  return getBoolOption(node, "next_piece", true);
+  return !!getConfig(node).next_piece;
 }
 
 function getShowControls(node) {
-  return getBoolOption(node, "show_controls", true);
+  return !!getConfig(node).show_controls;
 }
 
 function getGridEnabled(node) {
-  return getBoolOption(node, "grid_enabled", true);
+  return !!getConfig(node).grid_enabled;
 }
 
 function getGridColor(node) {
-  const linked = getLinkedOptionsNode(node);
-  if (linked?.widgets) {
-    const widget = linked.widgets.find((w) => w.name === "grid_color");
-    const parsed = parseRgbaColor(widget?.value);
-    if (parsed) return parsed;
-  }
-  if (node?.widgets) {
-    const widget = node.widgets.find((w) => w.name === "grid_color");
-    const parsed = parseRgbaColor(widget?.value);
-    if (parsed) return parsed;
-  }
-  return "rgba(255,255,255,0.2)";
+  const raw = getConfig(node).grid_color;
+  const parsed = normalizeColor(raw, true);
+  return parsed || "rgba(255,255,255,0.2)";
 }
 
 function formatKeyLabel(value) {
   if (!value) return "";
   if (value === "null" || value === "none") return "";
-  if (value === " ") return "␣";
+  if (value === " ") return "Space";
   if (value === "\\") return "\\";
   if (value === "/") return "/";
   if (value === "control") return "Ctrl";
-  if (value === "shift") return "⇧";
+  if (value === "shift") return "Shift";
   if (value === "escape") return "Esc";
   if (value === "enter") return "Enter";
   if (value === "tab") return "Tab";
@@ -2575,10 +3067,10 @@ function formatKeyLabel(value) {
   if (value === "end") return "End";
   if (value === "pageup") return "PgUp";
   if (value === "pagedown") return "PgDn";
-  if (value === "arrowleft") return "⬅";
-  if (value === "arrowright") return "➡";
-  if (value === "arrowup") return "⬆";
-  if (value === "arrowdown") return "⬇";
+  if (value === "arrowleft") return "ArrowLeft";
+  if (value === "arrowright") return "ArrowRight";
+  if (value === "arrowup") return "ArrowUp";
+  if (value === "arrowdown") return "ArrowDown";
   if (value.startsWith("numpad")) {
     return value.replace("numpad", "Num");
   }
@@ -2601,13 +3093,27 @@ function formatKeyList(values) {
   const items = values
     .map((value) => formatKeyLabel(value))
     .filter((value) => value);
-  return items.join(" / ");
+  return items.join(", ");
 }
 
 function normalizeEventKey(event) {
   const key = event.key ? event.key.toLowerCase() : "";
   const code = event.code ? event.code.toLowerCase() : "";
   return { key, code };
+}
+
+function bindingFromEvent(event) {
+  if (event.altKey || event.metaKey) return null;
+  if (["alt", "meta", "capslock", "numlock", "scrolllock"].includes(event.key?.toLowerCase())) {
+    return null;
+  }
+  const { key, code } = normalizeEventKey(event);
+  if (code && code.startsWith("numpad")) {
+    return ALLOWED_KEYS.has(code) ? code : null;
+  }
+  if (key === " ") return " ";
+  if (ALLOWED_KEYS.has(key)) return key;
+  return null;
 }
 
 function keyMatches(event, binding) {
@@ -2624,31 +3130,6 @@ function keyMatches(event, binding) {
   });
 }
 
-function parseRgbaColor(value) {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith("#")) {
-    const hex = trimmed.slice(1);
-    if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
-    const r = Number.parseInt(hex.slice(0, 2), 16);
-    const g = Number.parseInt(hex.slice(2, 4), 16);
-    const b = Number.parseInt(hex.slice(4, 6), 16);
-    return `rgba(${r},${g},${b},0.12)`;
-  }
-  const rgbaMatch = trimmed.match(
-    /^rgba?\s*\(\s*([0-9]{1,3})\s*,\s*([0-9]{1,3})\s*,\s*([0-9]{1,3})(?:\s*,\s*([0-9]*\.?[0-9]+))?\s*\)$/i,
-  );
-  if (!rgbaMatch) return null;
-  const r = Number.parseInt(rgbaMatch[1], 10);
-  const g = Number.parseInt(rgbaMatch[2], 10);
-  const b = Number.parseInt(rgbaMatch[3], 10);
-  const a = rgbaMatch[4] != null ? Number.parseFloat(rgbaMatch[4]) : 0.12;
-  if ([r, g, b].some((v) => !Number.isFinite(v) || v < 0 || v > 255)) return null;
-  if (!Number.isFinite(a) || a < 0 || a > 1) return null;
-  return `rgba(${r},${g},${b},${a})`;
-}
-
 function parseHexColor(value) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -2661,65 +3142,95 @@ function parseHexColor(value) {
   return `rgb(${r},${g},${b})`;
 }
 
-function coerceStringValue(value) {
-  if (value == null) return null;
-  if (typeof value === "string") return value;
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  if (typeof value === "object" && "value" in value) {
-    const inner = value.value;
-    if (typeof inner === "string") return inner;
-    if (typeof inner === "number" && Number.isFinite(inner)) return String(inner);
+function cloneDeep(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function mergeConfig(defaults, stored) {
+  if (!stored || typeof stored !== "object") return cloneDeep(defaults);
+  const result = Array.isArray(defaults) ? [] : {};
+  for (const [key, value] of Object.entries(defaults)) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      result[key] = mergeConfig(value, stored[key]);
+    } else if (Array.isArray(value)) {
+      const storedValue = stored[key];
+      result[key] = Array.isArray(storedValue) ? storedValue.slice(0, 5) : value.slice();
+    } else if (stored[key] !== undefined) {
+      result[key] = stored[key];
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function getConfig(node) {
+  if (!node) return cloneDeep(DEFAULT_CONFIG);
+  if (!node.properties) node.properties = {};
+  const stored = node.properties.tetrinode_config;
+  const merged = mergeConfig(DEFAULT_CONFIG, stored);
+  node.properties.tetrinode_config = merged;
+  return merged;
+}
+
+function updateConfig(node, updater) {
+  const current = getConfig(node);
+  const next = updater(cloneDeep(current));
+  node.properties.tetrinode_config = next;
+  return next;
+}
+
+function getOptionsForState(node) {
+  const config = getConfig(node);
+  return {
+    ghost_piece: !!config.ghost_piece,
+    next_piece: !!config.next_piece,
+    hold_queue: !!config.hold_queue,
+    show_controls: !!config.show_controls,
+    lock_down_mode: config.lock_down_mode,
+    start_level: config.start_level,
+    level_progression: config.level_progression,
+    queue_size: config.queue_size,
+    grid_enabled: !!config.grid_enabled,
+    grid_color: config.grid_color,
+    ...config.colors,
+  };
+}
+
+function normalizeColor(value, allowAlpha = true) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("#")) {
+    const parsed = parseHexColor(trimmed);
+    return parsed;
+  }
+  const rgba = parseRgbaString(trimmed);
+  if (rgba) {
+    if (!allowAlpha) return rgba.replace(/,([0-9.]+)\)$/, ",1)");
+    return rgba;
   }
   return null;
 }
 
-function getLinkedStringValue(node, name) {
-  const resolved = getInputLink(node, name);
-  if (!resolved) return null;
-  const { link, origin } = resolved;
-  const output = origin.outputs?.[link.origin_slot];
-  if (output && output.value !== undefined) {
-    return coerceStringValue(output.value);
-  }
-  const outputName = output?.name;
-  if (outputName && origin.widgets) {
-    const widgetIndex = origin.widgets.findIndex((w) => w.name === outputName);
-    if (widgetIndex >= 0) {
-      const widgetValue = origin.widgets[widgetIndex]?.value;
-      const coerced = coerceStringValue(widgetValue);
-      if (coerced) return coerced;
-      if (origin.widgets_values && origin.widgets_values.length > widgetIndex) {
-        const stored = coerceStringValue(origin.widgets_values[widgetIndex]);
-        if (stored) return stored;
-      }
-    }
-  }
-  if (origin.widgets_values && origin.widgets_values.length) {
-    const coerced = coerceStringValue(origin.widgets_values[0]);
-    if (coerced) return coerced;
-  }
-  if (origin.widgets && origin.widgets.length) {
-    const coerced = coerceStringValue(origin.widgets[0]?.value);
-    if (coerced) return coerced;
-  }
-  return null;
+function parseRgbaString(value) {
+  if (typeof value !== "string") return null;
+  const rgbaMatch = value.match(
+    /^rgba?\s*\(\s*([0-9]{1,3})\s*,\s*([0-9]{1,3})\s*,\s*([0-9]{1,3})(?:\s*,\s*([0-9]*\.?[0-9]+))?\s*\)$/i,
+  );
+  if (!rgbaMatch) return null;
+  const r = Number.parseInt(rgbaMatch[1], 10);
+  const g = Number.parseInt(rgbaMatch[2], 10);
+  const b = Number.parseInt(rgbaMatch[3], 10);
+  const a = rgbaMatch[4] != null ? Number.parseFloat(rgbaMatch[4]) : 1;
+  if ([r, g, b].some((v) => !Number.isFinite(v) || v < 0 || v > 255)) return null;
+  const clampedA = Math.min(1, Math.max(0, Number.isFinite(a) ? a : 1));
+  return `rgba(${r},${g},${b},${clampedA})`;
 }
 
 function getColorPalette(node) {
   const palette = { ...COLORS };
-  const linked = getLinkedOptionsNode(node);
-  if (!linked?.widgets) return palette;
-  const lookup = (name) => {
-    const linkedValue = getLinkedStringValue(linked, name);
-    const coercedInput = coerceStringValue(linkedValue);
-    if (coercedInput) {
-      const parsed = parseHexColor(coercedInput);
-      if (parsed) return parsed;
-    }
-    const widget = linked.widgets.find((w) => w.name === name);
-    const widgetValue = coerceStringValue(widget?.value);
-    return parseHexColor(widgetValue);
-  };
+  const config = getConfig(node);
   const mapping = {
     color_i: "I",
     color_j: "J",
@@ -2731,43 +3242,16 @@ function getColorPalette(node) {
     background_color: "X",
   };
   for (const [key, shape] of Object.entries(mapping)) {
-    const parsed = lookup(key);
+    const raw = config.colors?.[key];
+    const allowAlpha = key !== "background_color";
+    const parsed = normalizeColor(raw, allowAlpha);
     if (parsed) palette[shape] = parsed;
   }
   return palette;
 }
 
 function isGhostEnabled(node) {
-  const linked = getLinkedOptionsNode(node);
-  const lookup = (source) => {
-    if (!source?.widgets) return null;
-    const widget = source.widgets.find((w) => w.name === "ghost_piece");
-    if (widget && typeof widget.value === "boolean") {
-      return widget.value;
-    }
-    if (widget && typeof widget.value === "string") {
-      const trimmed = widget.value.trim().toLowerCase();
-      if (trimmed === "true") return true;
-      if (trimmed === "false") return false;
-    }
-    return null;
-  };
-  const linkedValue = lookup(linked);
-  if (linkedValue != null) return linkedValue;
-  const localValue = lookup(node);
-  if (localValue != null) return localValue;
-  return true;
-}
-
-function getLinkedOptionsNode(node) {
-  if (!node?.inputs) return null;
-  const input = node.inputs.find((inp) => inp?.name === "tetrinode_options");
-  if (!input || input.link == null) return null;
-  const link = node.graph?.links?.[input.link];
-  if (!link) return null;
-  const origin = node.graph?._nodes_by_id?.[link.origin_id];
-  if (!origin) return null;
-  return origin.comfyClass === "TetriNodeOptions" ? origin : null;
+  return !!getConfig(node).ghost_piece;
 }
 
 function ensureSeedControlWidget(node) {
@@ -2830,18 +3314,11 @@ function applySeedAfterGenerate(node) {
 app.registerExtension({
   name: EXT_NAME,
   async nodeCreated(node) {
-    if (node?.comfyClass === "TetriNodeOptions") {
-      ensureOptionsDivider(node);
-      ensureGhostDivider(node);
-      setTimeout(() => {
-        ensureOptionsDivider(node);
-        ensureGhostDivider(node);
-      }, 0);
-      return;
-    }
     if (node?.comfyClass !== NODE_CLASS) return;
     applyWidgetHiding(node);
     ensureSeedControlWidget(node);
+    ensureUiState(node);
+    getConfig(node);
     const seed = getSeedValue(node, { allowRandomize: true });
     const startLevel = getStartLevel(node);
     const progression = getLevelProgression(node);
@@ -2852,13 +3329,6 @@ app.registerExtension({
       node.__tetrisSizeInitialized = true;
     }
 
-    node.addWidget("button", "Load State", "Load State", () => {
-      node.__tetrisApplyStateRequested = true;
-      applyStateInput(node, { force: true });
-    });
-    node.addWidget("button", "Reset", "Reset", () => resetNode(node));
-    node.addWidget("button", "Pause/Play", "Pause", () => togglePause(node));
-
     const originalDraw = node.onDrawForeground;
     node.onDrawForeground = function (ctx) {
       const result = originalDraw?.apply(this, arguments);
@@ -2866,8 +3336,30 @@ app.registerExtension({
       return result;
     };
 
+    const originalMouseDown = node.onMouseDown;
+    node.onMouseDown = function (event, pos, _graphcanvas) {
+      if (handleToolbarClick(node, pos)) {
+        node.setDirtyCanvas(true, true);
+        return true;
+      }
+      return originalMouseDown?.apply(this, arguments);
+    };
+
+    const originalMouseMove = node.onMouseMove;
+    node.onMouseMove = function (event, pos, _graphcanvas) {
+      const ui = ensureUiState(node);
+      const hovered = hitToolbarButton(node, pos, node.__tetrisLastLayout?.boardY);
+      const next = hovered ? hovered.id : null;
+      if (next !== (ui.hoverButton?.id || null)) {
+        ui.hoverButton = hovered;
+        node.setDirtyCanvas(true, true);
+      }
+      return originalMouseMove?.apply(this, arguments);
+    };
+
     const originalRemoved = node.onRemoved;
     node.onRemoved = function () {
+      closeModal(node);
       stopTimer(node);
       return originalRemoved?.apply(this, arguments);
     };

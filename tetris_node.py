@@ -74,104 +74,6 @@ COLORS = {
     "X": (50, 52, 62),
 }
 
-KEY_OPTIONS = [
-    "F1",
-    "A",
-    "B",
-    "C",
-    "D",
-    "E",
-    "F",
-    "G",
-    "H",
-    "I",
-    "J",
-    "K",
-    "L",
-    "M",
-    "N",
-    "O",
-    "P",
-    "Q",
-    "R",
-    "S",
-    "T",
-    "U",
-    "V",
-    "W",
-    "X",
-    "Y",
-    "Z",
-    "0",
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
-    "ArrowLeft",
-    "ArrowRight",
-    "ArrowUp",
-    "ArrowDown",
-    "Space",
-    "Enter",
-    "Escape",
-    "Tab",
-    "Backspace",
-    "Delete",
-    "Home",
-    "End",
-    "PageUp",
-    "PageDown",
-    "Insert",
-    "Control",
-    "Shift",
-    "Numpad0",
-    "Numpad1",
-    "Numpad2",
-    "Numpad3",
-    "Numpad4",
-    "Numpad5",
-    "Numpad6",
-    "Numpad7",
-    "Numpad8",
-    "Numpad9",
-    "NumpadAdd",
-    "NumpadSubtract",
-    "NumpadMultiply",
-    "NumpadDivide",
-    "NumpadDecimal",
-    "NumpadEnter",
-    "F1",
-    "F2",
-    "F3",
-    "F4",
-    "F5",
-    "F6",
-    "F7",
-    "F8",
-    "F9",
-    "F10",
-    "F11",
-    "F12",
-    "-",
-    "=",
-    "[",
-    "]",
-    "Backslash",
-    ";",
-    "'",
-    ",",
-    ".",
-    "Slash",
-    "`",
-]
-
-KEY_OPTIONS_WITH_NONE = ["None", *KEY_OPTIONS]
-
 
 def _empty_board():
     return [[0 for _ in range(BOARD_WIDTH)] for _ in range(BOARD_HEIGHT)]
@@ -571,6 +473,7 @@ def _default_state(seed):
         "last_action": None,
         "last_rotate_kick": None,
         "tspin": "none",
+        "options": {},
     }
     state["piece"] = _spawn_piece(_pop_shape(state))
     state["next_piece_shape"] = _pop_shape(state)
@@ -757,6 +660,8 @@ def _deserialize_state(state_json, seed, enforce_seed=True):
         state["last_rotate_kick"] = None
     if "tspin" not in state:
         state["tspin"] = "none"
+    if "options" not in state:
+        state["options"] = {}
     if "hold_piece_shape" not in state:
         state["hold_piece_shape"] = None
     if state.get("hold_piece_shape") not in SHAPES:
@@ -919,9 +824,7 @@ class TetriNode:
                 "block_size": ("INT", {"default": 20, "min": 8, "max": 48}),
             },
             "optional": {
-                "tetrinode_options": ("TETRINODE_OPTIONS",),
                 "background_image": ("IMAGE",),
-                "state_in": ("STRING", {"default": "", "forceInput": True}),
             },
         }
 
@@ -936,11 +839,15 @@ class TetriNode:
         state,
         seed,
         block_size,
-        tetrinode_options="",
         background_image=None,
-        state_in="",
     ):
-        options = _resolve_options(tetrinode_options)
+        state_override = state
+        if action == "new":
+            state_obj = _default_state(seed)
+        else:
+            enforce_seed = action != "sync"
+            state_obj = _deserialize_state(state_override, seed, enforce_seed=enforce_seed)
+        options = _resolve_options(state_obj.get("options", {}))
         palette = _resolve_colors(options)
         ghost_enabled = _resolve_bool(options, "ghost_piece", True)
         grid_enabled = _resolve_bool(options, "grid_enabled", True)
@@ -951,12 +858,6 @@ class TetriNode:
             queue_size = max(0, min(6, int(queue_size)))
         except (TypeError, ValueError):
             queue_size = 6
-        state_override = state_in if isinstance(state_in, str) and state_in.strip() else state
-        if action == "new":
-            state_obj = _default_state(seed)
-        else:
-            enforce_seed = action != "sync"
-            state_obj = _deserialize_state(state_override, seed, enforce_seed=enforce_seed)
 
         if action == "sync":
             state_obj["seed"] = seed
@@ -1174,150 +1075,3 @@ class TetriNode:
             ),
             background_image,
         )
-
-
-class TetriNodeOptions:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "show_controls": ("BOOLEAN", {"default": True}),
-                "move_left": (KEY_OPTIONS, {"default": "ArrowLeft"}),
-                "move_left_2": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad4"}),
-                "move_right": (KEY_OPTIONS, {"default": "ArrowRight"}),
-                "move_right_2": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad6"}),
-                "rotate_cw": (KEY_OPTIONS, {"default": "ArrowUp"}),
-                "rotate_cw_2": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad5"}),
-                "rotate_cw_3": (KEY_OPTIONS_WITH_NONE, {"default": "X"}),
-                "rotate_cw_4": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad1"}),
-                "rotate_cw_5": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad9"}),
-                "rotate_ccw": (KEY_OPTIONS, {"default": "Control"}),
-                "rotate_ccw_2": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad3"}),
-                "rotate_ccw_3": (KEY_OPTIONS_WITH_NONE, {"default": "Z"}),
-                "rotate_ccw_4": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad7"}),
-                "soft_drop": (KEY_OPTIONS, {"default": "ArrowDown"}),
-                "soft_drop_2": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad2"}),
-                "hard_drop": (KEY_OPTIONS, {"default": "Space"}),
-                "hard_drop_2": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad8"}),
-                "hold": (KEY_OPTIONS, {"default": "Shift"}),
-                "hold_2": (KEY_OPTIONS_WITH_NONE, {"default": "Numpad0"}),
-                "hold_3": (KEY_OPTIONS_WITH_NONE, {"default": "C"}),
-                "reset": (KEY_OPTIONS, {"default": "R"}),
-                "reset_2": (KEY_OPTIONS_WITH_NONE, {"default": "None"}),
-                "pause": (KEY_OPTIONS, {"default": "Escape"}),
-                "pause_2": (KEY_OPTIONS_WITH_NONE, {"default": "F1"}),
-                "color_i": ("STRING", {"default": "#55D6FF"}),
-                "color_j": ("STRING", {"default": "#5669FF"}),
-                "color_l": ("STRING", {"default": "#FFA74F"}),
-                "color_o": ("STRING", {"default": "#FFE757"}),
-                "color_s": ("STRING", {"default": "#7AEB84"}),
-                "color_t": ("STRING", {"default": "#BB80FF"}),
-                "color_z": ("STRING", {"default": "#FF7676"}),
-                "background_color": ("STRING", {"default": "#32343E"}),
-                "ghost_piece": ("BOOLEAN", {"default": True}),
-                "next_piece": ("BOOLEAN", {"default": True}),
-                "hold_queue": ("BOOLEAN", {"default": True}),
-                "lock_down_mode": (["extended", "infinite", "classic"], {"default": "extended"}),
-                "start_level": ("INT", {"default": 1, "min": 1, "max": 15}),
-                "level_progression": (["fixed", "variable"], {"default": "fixed"}),
-                "queue_size": ("INT", {"default": 6, "min": 0, "max": 6}),
-                "grid_enabled": ("BOOLEAN", {"default": True}),
-                "grid_color": ("STRING", {"default": "rgba(255,255,255,0.2)"}),
-            }
-        }
-
-    RETURN_TYPES = ("TETRINODE_OPTIONS",)
-    RETURN_NAMES = ("tetrinode_options",)
-    FUNCTION = "build"
-    CATEGORY = "games"
-
-    def build(
-        self,
-        show_controls,
-        move_left,
-        move_left_2,
-        move_right,
-        move_right_2,
-        rotate_cw,
-        rotate_cw_2,
-        rotate_cw_3,
-        rotate_cw_4,
-        rotate_cw_5,
-        rotate_ccw,
-        rotate_ccw_2,
-        rotate_ccw_3,
-        rotate_ccw_4,
-        soft_drop,
-        soft_drop_2,
-        hard_drop,
-        hard_drop_2,
-        hold,
-        hold_2,
-        hold_3,
-        reset,
-        reset_2,
-        pause,
-        pause_2,
-        lock_down_mode,
-        start_level,
-        level_progression,
-        queue_size,
-        grid_enabled,
-        grid_color,
-        color_i,
-        color_j,
-        color_l,
-        color_o,
-        color_s,
-        color_t,
-        color_z,
-        background_color,
-        ghost_piece,
-        next_piece,
-        hold_queue,
-    ):
-        payload = {
-            "show_controls": show_controls,
-            "move_left": move_left,
-            "move_left_2": move_left_2,
-            "move_right": move_right,
-            "move_right_2": move_right_2,
-            "rotate_cw": rotate_cw,
-            "rotate_cw_2": rotate_cw_2,
-            "rotate_cw_3": rotate_cw_3,
-            "rotate_cw_4": rotate_cw_4,
-            "rotate_cw_5": rotate_cw_5,
-            "rotate_ccw": rotate_ccw,
-            "rotate_ccw_2": rotate_ccw_2,
-            "rotate_ccw_3": rotate_ccw_3,
-            "rotate_ccw_4": rotate_ccw_4,
-            "soft_drop": soft_drop,
-            "soft_drop_2": soft_drop_2,
-            "hard_drop": hard_drop,
-            "hard_drop_2": hard_drop_2,
-            "hold": hold,
-            "hold_2": hold_2,
-            "hold_3": hold_3,
-            "reset": reset,
-            "reset_2": reset_2,
-            "pause": pause,
-            "pause_2": pause_2,
-            "lock_down_mode": lock_down_mode,
-            "start_level": start_level,
-            "level_progression": level_progression,
-            "queue_size": queue_size,
-            "grid_enabled": grid_enabled,
-            "grid_color": grid_color,
-            "color_i": color_i,
-            "color_j": color_j,
-            "color_l": color_l,
-            "color_o": color_o,
-            "color_s": color_s,
-            "color_t": color_t,
-            "color_z": color_z,
-            "background_color": background_color,
-            "ghost_piece": ghost_piece,
-            "next_piece": next_piece,
-            "hold_queue": hold_queue,
-        }
-        return (json.dumps(payload),)

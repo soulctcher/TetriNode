@@ -1,13 +1,11 @@
-from .tetris_node import TetriNode, TetriNodeOptions
+from .tetris_node import TetriNode
 
 NODE_CLASS_MAPPINGS = {
     "TetriNode": TetriNode,
-    "TetriNodeOptions": TetriNodeOptions,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "TetriNode": "TetriNode",
-    "TetriNodeOptions": "TetriNode Options",
 }
 
 WEB_DIRECTORY = "./js"
