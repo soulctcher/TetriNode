@@ -17,7 +17,6 @@ const HEADER_H = 28;
 const CONTROL_GAP = 0;
 const PAUSE_GAP = 6;
 const CONTROL_MIN = 110;
-const CENTER_BIAS_X = 24;
 const DAS_MS = 300;
 const ARR_MS = 56;
 const IMAGE_CACHE = new Map();
@@ -209,12 +208,12 @@ function createState(seed, startLevel = 1, levelProgression = "fixed") {
   };
 }
 
-function hydrateState(serialized, fallbackSeed, startLevel = 1, levelProgression = "fixed") {
+function hydrateState(serialized, fallbackSeed, startLevel = 1) {
   if (!serialized || typeof serialized !== "string") return null;
   let data = null;
   try {
     data = JSON.parse(serialized);
-  } catch (err) {
+  } catch {
     return null;
   }
   if (!data || typeof data !== "object") return null;
@@ -699,11 +698,6 @@ function holdPiece(state) {
   return true;
 }
 
-function drawBlock(ctx, x, y, color) {
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, 1, 1);
-}
-
 function getWidgetBottom(node) {
   if (!node.widgets) return 0;
   let maxY = 0;
@@ -773,7 +767,6 @@ function getLayout(node) {
   const boardW = blockSize * GRID_W;
   const extraPx = Math.round(blockSize * EXTRA_VISIBLE_ROWS);
   const boardH = blockSize * GRID_H_VISIBLE + extraPx;
-  const totalW = boardW + sideW * sideSlots + PADDING * sideSlots;
   const boardX = Math.max(PADDING, Math.round((node.size[0] - boardW) / 2));
   const boardY = Math.round(topY);
   const sideX = Math.round(boardX + boardW + PADDING);
@@ -1799,7 +1792,7 @@ function applyStateInput(node, { force = false } = {}) {
   let parsed = null;
   try {
     parsed = JSON.parse(incoming);
-  } catch (err) {
+  } catch {
     setStatusMessage(node, "Invalid state JSON.", "error");
     node.__tetrisApplyStateRequested = false;
     return;
@@ -2232,7 +2225,7 @@ function ensureOptionsDivider(node) {
   const divider = {
     type: "tetrinode_divider",
     name: "divider",
-    draw(ctx, _, width, y, height) {
+    draw(ctx, _, width, y, _height) {
       ctx.strokeStyle = "rgba(235,235,235,0.25)";
       ctx.beginPath();
       const lineY = y + 4;
@@ -2260,7 +2253,7 @@ function ensureGhostDivider(node) {
   const divider = {
     type: "tetrinode_divider",
     name: "divider_ghost",
-    draw(ctx, _, width, y, height) {
+    draw(ctx, _, width, y, _height) {
       ctx.strokeStyle = "rgba(235,235,235,0.25)";
       ctx.beginPath();
       const lineY = y + 4;
@@ -2609,13 +2602,6 @@ function formatKeyList(values) {
     .map((value) => formatKeyLabel(value))
     .filter((value) => value);
   return items.join(" / ");
-}
-
-function formatKeyPair(primary, secondary) {
-  const first = formatKeyLabel(primary);
-  const second = formatKeyLabel(secondary);
-  if (second) return `${first} / ${second}`;
-  return first;
 }
 
 function normalizeEventKey(event) {

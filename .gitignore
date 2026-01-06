@@ -2,11 +2,15 @@ __pycache__/
 .comfyui_test/
 .ruff_cache/
 .venv/
-.tspin_venv/
 .tmp_tspin_pages/
+.tspin_venv/
 knowledge-library/
+node_modules/
 skills/
 tests/
 deploy_prod.sh
+eslint.config.js
 node.zip
+package-lock.json
+package.json
 *~

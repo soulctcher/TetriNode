@@ -3,11 +3,10 @@ import os
 import random
 import re
 
+import folder_paths
 import numpy as np
 import torch
 from PIL import Image, ImageDraw
-import folder_paths
-
 
 BOARD_WIDTH = 10
 BOARD_HEIGHT = 40
@@ -977,11 +976,6 @@ class TetriNode:
                 output_block,
                 palette,
             )
-            lines_total = (
-                state_obj["goal_lines_total"]
-                if state_obj.get("level_progression") == "variable"
-                else state_obj["lines_cleared_total"]
-            )
             return _wrap_result(
                 (
                     image,
@@ -1009,11 +1003,6 @@ class TetriNode:
                 output_block,
                 palette,
             )
-            lines_total = (
-                state_obj["goal_lines_total"]
-                if state_obj.get("level_progression") == "variable"
-                else state_obj["lines_cleared_total"]
-            )
             return _wrap_result(
                 (
                     image,
@@ -1027,8 +1016,6 @@ class TetriNode:
         board = state_obj["board"]
         piece = state_obj["piece"]
         next_shape = state_obj["next_piece_shape"]
-        lines_cleared = 0
-
         if action == "left":
             moved = _move(piece, -1, 0)
             if not _collides(board, moved):
@@ -1093,7 +1080,6 @@ class TetriNode:
                     board, piece, state_obj["last_action"], state_obj["last_rotate_kick"]
                 )
                 board, cleared = _clear_lines(board)
-                lines_cleared = cleared
                 _update_stats(state_obj, cleared)
                 level_before = state_obj.get("level", 1)
                 prev_b2b = state_obj.get("b2b_active", False)
@@ -1130,7 +1116,6 @@ class TetriNode:
                     board, piece, state_obj["last_action"], state_obj["last_rotate_kick"]
                 )
                 board, cleared = _clear_lines(board)
-                lines_cleared = cleared
                 _update_stats(state_obj, cleared)
                 level_before = state_obj.get("level", 1)
                 prev_b2b = state_obj.get("b2b_active", False)
@@ -1179,11 +1164,6 @@ class TetriNode:
             _get_upcoming_shapes(state_obj, queue_size + 1)[1 : queue_size + 1],
             output_block,
             palette,
-        )
-        lines_out = (
-            state_obj["goal_lines_total"]
-            if state_obj.get("level_progression") == "variable"
-            else state_obj["lines_cleared_total"]
         )
         return _wrap_result(
             (

@@ -33,3 +33,17 @@ DisplayName = "TetriNode"
 Icon = "https://raw.githubusercontent.com/soulctcher/TetriNode/refs/heads/main/docs/images/icon.png"
 includes = [] 
 # "requires-comfyui" = ">=1.0.0"  # ComfyUI version compatibility
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = [
+    ".comfyui_test",
+    ".tspin_venv",
+    ".tmp_tspin_pages",
+    "tests/artifacts",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
