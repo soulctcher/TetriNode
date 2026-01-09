@@ -17,7 +17,7 @@ A ComfyUI custom node pack that embeds a playable Tetris game inside a node UI, 
 - Level progression with official fall speeds
 - Pause/Play and Reset controls
 - Seeded piece generation with a standard seed widget available
-- In-node toolbar with modal configuration for controls, colors, gameplay, and theme
+- In-node toolbar with a single Settings modal (tabs: Settings, Controls, Tetrominos, UI Themes)
 
 ## Nodes
 
@@ -38,17 +38,17 @@ Main gameplay node.
 - `state` (STRING): serialized game state
 
 **UI controls**
-- **Top toolbar**: Load State, Reset, Pause/Play, and configuration modals (Controls, Colors, Gameplay, Theme).
+- **Top toolbar**: Load State, Reset, Pause/Play, and a Settings modal.
 - **Load State**: Opens a modal to paste a serialized state. The game pauses after loading.
 
-### Configuration modals
+### Settings modal
 
-All configuration now lives inside TetriNode (no external options node).
+All configuration now lives inside TetriNode (no external options node). The Settings modal is tabbed.
 
+- **Settings**: Toggles (controls/ghost/next/hold/grid), lock-down mode, level progression, start level, and queue size.
 - **Controls**: Click Add to capture a key (up to 5 per action). Remove any binding with the `X`, or reset per action. Capture supports the same allowed keys as before and shows human-friendly labels.
-- **Colors**: Per-piece colors plus background and grid colors. Supports hex and RGBA (alpha for pieces and grid).
-- **Gameplay**: Toggles (controls/ghost/next/hold/grid), lock-down mode, level progression, start level, and queue size.
-- **Theme**: Glass/Flat/Neon/Minimal presets with editable colors and a “Reset All Theme Colors” button.
+- **Tetrominos**: Per-piece colors plus background and grid colors. Supports hex and RGBA (alpha for pieces and grid).
+- **UI Themes**: Glass/Flat/Neon/Minimal presets with editable colors and a “Reset Theme Colors” button.
 
 ## Controls (Default)
 
