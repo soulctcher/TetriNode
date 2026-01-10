@@ -116,6 +116,7 @@ const DEFAULT_CONFIG = {
     hold: ["shift", "numpad0", "c"],
     reset: ["r"],
     pause: ["escape", "f1"],
+    settings: ["f10"],
   },
   colors: {
     color_i: "#55D6FF",
@@ -138,6 +139,22 @@ const DEFAULT_CONFIG = {
   grid_enabled: true,
   grid_color: "rgba(255,255,255,0.2)",
 };
+
+const CONTROL_ACTIONS = [
+  { id: "move_left", label: "Move Left" },
+  { id: "move_right", label: "Move Right" },
+  { id: "rotate_cw", label: "Rotate CW" },
+  { id: "rotate_ccw", label: "Rotate CCW" },
+  { id: "soft_drop", label: "Soft Drop" },
+  { id: "hard_drop", label: "Hard Drop" },
+  { id: "hold", label: "Hold" },
+  { id: "reset", label: "Reset" },
+  { id: "pause", label: "Pause" },
+  { id: "settings", label: "Settings" },
+];
+const CONTROL_ACTION_LABELS = Object.fromEntries(
+  CONTROL_ACTIONS.map((action) => [action.id, action.label]),
+);
 
 const ALLOWED_KEYS = new Set([
   "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p",
@@ -1401,11 +1418,14 @@ function drawNode(node, ctx) {
   const previewBox = Math.max(4, Math.floor(PREVIEW_GRID * blockSize * PREVIEW_SCALE));
   const rightInset = Math.max(0, Math.floor((sideW - previewBox) / 2));
   const columnShift = Math.max(4, Math.floor(blockSize * 0.2));
-  const baseLeftX = showHold ? boardX - PADDING - sideW + rightInset : PADDING;
-  const leftX = baseLeftX + columnShift;
-  const rightX = sideX + rightInset + columnShift;
-  const maxWidthRight = Math.max(0, node.size[0] - rightX - PADDING);
-  const leftColumnW = showHold ? previewBox : Math.max(0, boardX - PADDING * 2);
+  const leftBoxX = PADDING;
+  const leftBoxW = Math.max(0, boardX - PADDING * 2);
+  const leftX = leftBoxX + columnShift;
+  const rightBoxX = boardX + boardW + PADDING;
+  const rightBoxW = Math.max(0, node.size[0] - PADDING - rightBoxX);
+  const rightX = rightBoxX + columnShift;
+  const maxWidthRight = Math.max(0, node.size[0] - rightBoxX - PADDING);
+  const leftColumnW = leftBoxW;
   const maxWidthLeft = Math.max(0, leftColumnW);
   const measureFits = (size, lines, maxWidth) => {
     ctx.font = `bold ${size}px sans-serif`;
@@ -1479,7 +1499,7 @@ function drawNode(node, ctx) {
   const lpm = minutes > 0 ? (state.lines || 0) / minutes : 0;
   const tpmText = minutes > 0 ? tpm.toFixed(1) : "0";
   const lpmText = minutes > 0 ? lpm.toFixed(1) : "0";
-  const valueX = leftX + previewBox - 2;
+  const valueX = leftBoxX + leftBoxW - 3;
   ctx.textAlign = "right";
   ctx.fillText(`${state.score}`, valueX, scoreValueY);
   ctx.fillText(formatTimeMs(state.timeMs), valueX, timeValueY);
@@ -1504,6 +1524,7 @@ function drawNode(node, ctx) {
       { label: "Hold:", value: formatKeyLabel(bindings.hold?.[0]) },
       { label: "Reset:", value: formatKeyLabel(bindings.reset?.[0]) },
       { label: "Pause:", value: formatKeyLabel(bindings.pause?.[0]) },
+      { label: "Settings:", value: formatKeyLabel(bindings.settings?.[0]) },
     ]
     : [];
   let fontSize = Math.max(4, Math.floor(blockSize * 0.3));
@@ -1516,6 +1537,7 @@ function drawNode(node, ctx) {
   }
   const lineHeight = fontSize + 3;
   const tablePad = Math.max(6, Math.floor(fontSize * 0.6));
+  const controlsPad = tablePad + 3;
   const tableGap = Math.max(6, Math.floor(fontSize * 0.6));
   const tableWForControls = Math.max(0, maxWidthLeft);
   let controlsHeight = 0;
@@ -1526,7 +1548,7 @@ function drawNode(node, ctx) {
     ctx.font = `bold ${fontSize}px sans-serif`;
     leftColWidth = Math.max(...controlEntries.map((entry) => ctx.measureText(entry.label).width));
     leftColWidth = Math.min(leftColWidth, Math.max(40, Math.floor(tableWForControls * 0.45)));
-    rightColWidth = Math.max(0, tableWForControls - tablePad * 2 - leftColWidth - tableGap);
+    rightColWidth = Math.max(0, tableWForControls - controlsPad * 2 - leftColWidth - tableGap);
     ctx.font = `${fontSize}px sans-serif`;
     const wrapValue = (value) => {
       if (!value) return [""];
@@ -1558,7 +1580,7 @@ function drawNode(node, ctx) {
   const holdNextTitleY = nextBoxY + titleFontSize + 4;
   const titleInset = Math.max(4, Math.floor(titleFontSize * 0.5));
   ctx.font = `bold ${titleFontSize}px sans-serif`;
-  const drawPreviewShape = (shape, originX, boxY, cellSize, areaH) => {
+  const drawPreviewShape = (shape, originX, boxY, cellSize, areaH, boxW) => {
     if (!shape || !SHAPES[shape]) return;
     const preview = SHAPES[shape][0];
     let minX = 99;
@@ -1573,7 +1595,7 @@ function drawNode(node, ctx) {
     }
     const shapeW = maxX - minX + 1;
     const shapeH = maxY - minY + 1;
-    const areaW = previewBox - innerPad * 2;
+    const areaW = (boxW ?? previewBox) - innerPad * 2;
     const contentH = Math.max(0, areaH - innerPad * 2);
     const offX = Math.round((areaW - shapeW * cellSize) / 2);
     const offY = Math.round((contentH - shapeH * cellSize) / 2);
@@ -1593,29 +1615,29 @@ function drawNode(node, ctx) {
   const previewContentH = Math.max(4, previewBox - titleHeight);
   const nextCellSize = Math.max(4, Math.floor((previewContentH - innerPad * 2) / PREVIEW_GRID));
   if (showHold) {
-    drawPanelBox(ctx, node, leftX, nextBoxY, previewBox, previewBox, theme.panel_bg, theme.panel_border);
+    drawPanelBox(ctx, node, leftBoxX, nextBoxY, leftBoxW, previewBox, theme.panel_bg, theme.panel_border);
     if (showPreviews) {
-      drawPreviewShape(state.holdShape, leftX, nextBoxY + titleHeight, nextCellSize, previewContentH);
+      drawPreviewShape(state.holdShape, leftBoxX, nextBoxY + titleHeight, nextCellSize, previewContentH, leftBoxW);
     }
     ctx.fillStyle = theme.text;
     ctx.font = `bold ${titleFontSize}px sans-serif`;
-    ctx.fillText("Hold", leftX + titleInset, holdNextTitleY);
+    ctx.fillText("Hold", leftBoxX + titleInset, holdNextTitleY);
   }
   if (showNext) {
-    drawPanelBox(ctx, node, rightX, nextBoxY, previewBox, previewBox, theme.panel_bg, theme.panel_border);
+    drawPanelBox(ctx, node, rightBoxX, nextBoxY, rightBoxW, previewBox, theme.panel_bg, theme.panel_border);
     if (showPreviews) {
-      drawPreviewShape(state.nextShape, rightX, nextBoxY + titleHeight, nextCellSize, previewContentH);
+      drawPreviewShape(state.nextShape, rightBoxX, nextBoxY + titleHeight, nextCellSize, previewContentH, rightBoxW);
     }
     ctx.fillStyle = theme.text;
     ctx.font = `bold ${titleFontSize}px sans-serif`;
-    ctx.fillText("Next", rightX + titleInset, holdNextTitleY);
+    ctx.fillText("Next", rightBoxX + titleInset, holdNextTitleY);
   }
 
   const queueCountTarget = showNext ? getQueueSize(node) : 0;
   const showQueue = queueCountTarget > 0;
   const queueBoxY = nextBoxY + previewBox + PADDING * 1.2;
-  const queueBoxW = previewBox;
-  const queueBoxX = rightX;
+  const queueBoxW = rightBoxW;
+  const queueBoxX = rightBoxX;
   const queueTitleY = queueBoxY + titleFontSize + 4;
   const upcoming = getUpcomingShapes(state, queueCountTarget + 1);
   const queue = upcoming.slice(1, queueCountTarget + 1);
@@ -1682,7 +1704,7 @@ function drawNode(node, ctx) {
     drawPanelBox(ctx, node, queueBoxX, queueBoxY, queueBoxW, outlineHeight, theme.panel_bg, theme.panel_border);
     ctx.fillStyle = theme.text;
     ctx.font = `bold ${titleFontSize}px sans-serif`;
-    ctx.fillText("Queue", rightX + titleInset, queueTitleY);
+    ctx.fillText("Queue", rightBoxX + titleInset, queueTitleY);
   }
   let cursorY = queueContentY + innerPad;
   boundsList.slice(0, drawQueueCount).forEach((bounds, idx) => {
@@ -1716,8 +1738,8 @@ function drawNode(node, ctx) {
     ctx.fillStyle = theme.text;
     ctx.font = `bold ${titleFontSize}px sans-serif`;
     const tableY = baseInfoY;
-    const tableX = leftX;
-    const tableW = tableWForControls;
+    const tableX = leftBoxX;
+    const tableW = leftBoxW;
     const tableH = Math.max(0, boardY + boardH - tableY);
     drawPanelBox(ctx, node, tableX, tableY, tableW, tableH, theme.panel_bg, theme.panel_border);
     ctx.fillStyle = theme.text;
@@ -1725,11 +1747,11 @@ function drawNode(node, ctx) {
     ctx.font = `${fontSize}px sans-serif`;
     let rowY = tableY + titleHeight + tablePad + Math.floor(fontSize * 0.25);
     for (const row of controlRows) {
-      const labelX = tableX + tablePad + leftColWidth;
+      const labelX = tableX + controlsPad + leftColWidth;
       ctx.textAlign = "right";
       ctx.fillText(row.label, labelX, rowY);
       ctx.textAlign = "left";
-      const valueX = tableX + tablePad + leftColWidth + tableGap;
+      const valueX = tableX + controlsPad + leftColWidth + tableGap;
       for (let i = 0; i < row.lines.length; i += 1) {
         const lineY = rowY + i * lineHeight;
         ctx.fillText(row.lines[i], valueX, lineY);
@@ -1799,6 +1821,50 @@ function formatThemeKeyLabel(key) {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function hexToRgbaString(hex, alphaOverride) {
+  const parsed = parseHexToRgba(hex);
+  if (!parsed) return hex;
+  const alpha = alphaOverride != null ? alphaOverride : parsed.a ?? 1;
+  return `rgba(${parsed.r},${parsed.g},${parsed.b},${Math.min(1, Math.max(0, alpha))})`;
+}
+
+function hslToRgbaString(h, s, l, a) {
+  const rgb = hslToRgb(h, s, l);
+  return rgbaString({ r: rgb.r, g: rgb.g, b: rgb.b, a }, true);
+}
+
+function buildThemePaletteFromSwatch(hex, themeName) {
+  const parsed = parseColorComponents(hex);
+  const hsl = rgbToHsl(parsed.r, parsed.g, parsed.b);
+  const hue = hsl.h;
+  const sat = hsl.s;
+  const baseLight = hsl.l;
+  const isGlass = themeName === "glass";
+  const isMinimal = themeName === "minimal";
+  const isNeon = themeName === "neon";
+  const panelBgAlpha = isGlass ? 0.82 : isMinimal ? 0.9 : 0.92;
+  const panelBgLight = Math.max(10, Math.min(18, baseLight * 0.25));
+  const panelBgSat = Math.max(8, Math.min(40, sat * 0.4));
+  const panelBorderLight = Math.max(45, Math.min(80, baseLight + 5));
+  const panelBorderSat = Math.max(25, Math.min(85, sat * 0.8 + 10));
+  const panelShadowLight = Math.max(4, Math.min(12, baseLight * 0.2));
+  return {
+    panel_bg: hslToRgbaString(hue, panelBgSat, panelBgLight, panelBgAlpha),
+    panel_border: hslToRgbaString(hue, panelBorderSat, panelBorderLight, isNeon ? 0.45 : 0.25),
+    panel_shadow: hslToRgbaString(hue, Math.max(5, panelBgSat * 0.3), panelShadowLight, 0.35),
+    button: hex,
+    text: "#FFFFFF",
+    button_bg: hslToRgbaString(hue, Math.min(80, sat), Math.max(20, Math.min(55, baseLight)), 0.12),
+    button_hover: hslToRgbaString(
+      hue,
+      Math.min(85, sat),
+      Math.max(30, Math.min(65, baseLight + 8)),
+      0.24,
+    ),
+    accent: hex,
+  };
 }
 
 function colorToHex8(value) {
@@ -1978,6 +2044,7 @@ function applyModalThemeStyles(node, container) {
     btn.style.setProperty("opacity", "1", "important");
   };
   container.querySelectorAll("button").forEach((btn) => {
+    if (btn.dataset.tnSwatch === "true") return;
     applyButtonStyle(btn, "base");
     if (!btn.dataset.tnHoverBound) {
       btn.dataset.tnHoverBound = "true";
@@ -2176,6 +2243,7 @@ function ensureUiState(node) {
       hoverButton: null,
       modal: null,
       captureAction: null,
+      confirmPrompt: null,
     };
   }
   return node.__tetrisUi;
@@ -2423,6 +2491,7 @@ function closeModal(node) {
   }
   ui.modal = null;
   ui.captureAction = null;
+  ui.confirmPrompt = null;
 }
 
 function pauseForModal(node) {
@@ -2515,7 +2584,13 @@ function createModalBase(node, title) {
     drag = null;
   });
 
-  ensureUiState(node).modal = { el: modal, body, title };
+  ensureUiState(node).modal = {
+    el: modal,
+    body,
+    title,
+    kind: "generic",
+    activeTab: null,
+  };
   return { modal, body };
 }
 
@@ -2542,11 +2617,21 @@ function openLoadStateModal(node) {
 
 function openSettingsModal(node) {
   const { body } = createModalBase(node, "Settings");
+  const ui = ensureUiState(node);
+  if (ui.modal) {
+    ui.modal.kind = "settings";
+    ui.modal.activeTab = "settings";
+  }
   renderSettingsModal(node, body, "settings");
 }
 
 function renderSettingsModal(node, body, activeTab = "settings") {
   body.innerHTML = "";
+  const ui = ensureUiState(node);
+  if (ui.modal) {
+    ui.modal.kind = "settings";
+    ui.modal.activeTab = activeTab;
+  }
   const tabs = [
     { id: "settings", label: "Settings" },
     { id: "controls", label: "Controls" },
@@ -2563,7 +2648,16 @@ function renderSettingsModal(node, body, activeTab = "settings") {
   tabRow.style.marginBottom = "0";
   tabs.forEach((tab) => {
     const btn = document.createElement("button");
-    btn.textContent = tab.label;
+    const first = tab.label.slice(0, 1);
+    const rest = tab.label.slice(1);
+    const label = document.createElement("span");
+    const firstSpan = document.createElement("span");
+    firstSpan.textContent = first;
+    firstSpan.style.textDecoration = "underline";
+    const restSpan = document.createElement("span");
+    restSpan.textContent = rest;
+    label.append(firstSpan, restSpan);
+    btn.appendChild(label);
     btn.dataset.tnTab = "true";
     btn.dataset.tnActive = tab.id === activeTab ? "true" : "false";
     btn.addEventListener("click", () => {
@@ -2591,6 +2685,10 @@ function renderSettingsModal(node, body, activeTab = "settings") {
 
 function openControlsModal(node) {
   const { body } = createModalBase(node, "Controls");
+  const ui = ensureUiState(node);
+  if (ui.modal) {
+    ui.modal.kind = "controls";
+  }
   renderControlsModal(node, body);
 }
 
@@ -2600,17 +2698,50 @@ function renderControlsModal(node, body) {
   const config = getConfig(node);
   const theme = getThemeColors(node);
   const showBorders = config.theme !== "flat" && config.theme !== "minimal";
-  const actions = [
-    { id: "move_left", label: "Move Left" },
-    { id: "move_right", label: "Move Right" },
-    { id: "rotate_cw", label: "Rotate CW" },
-    { id: "rotate_ccw", label: "Rotate CCW" },
-    { id: "soft_drop", label: "Soft Drop" },
-    { id: "hard_drop", label: "Hard Drop" },
-    { id: "hold", label: "Hold" },
-    { id: "reset", label: "Reset" },
-    { id: "pause", label: "Pause" },
-  ];
+  const actions = CONTROL_ACTIONS;
+  const renderConfirmPrompt = () => {
+    const prompt = ui.confirmPrompt;
+    if (!prompt) return;
+    const panel = document.createElement("div");
+    panel.style.display = "flex";
+    panel.style.flexDirection = "column";
+    panel.style.gap = "8px";
+    panel.style.padding = "10px";
+    panel.style.borderRadius = "8px";
+    panel.style.background = theme.panel_bg;
+    panel.style.border = `1px solid ${theme.panel_border}`;
+    panel.style.boxShadow = `0 6px 14px ${theme.panel_shadow}`;
+    const title = document.createElement("div");
+    title.style.fontWeight = "600";
+    title.textContent = prompt.title || "Confirm";
+    const message = document.createElement("div");
+    message.style.whiteSpace = "pre-line";
+    message.textContent = Array.isArray(prompt.lines)
+      ? prompt.lines.join("\n")
+      : `${prompt.lines || ""}`;
+    const actionsRow = document.createElement("div");
+    actionsRow.style.display = "flex";
+    actionsRow.style.gap = "8px";
+    const confirmBtn = document.createElement("button");
+    confirmBtn.textContent = prompt.confirmLabel || "Confirm";
+    confirmBtn.addEventListener("click", () => {
+      const onConfirm = prompt.onConfirm;
+      ui.confirmPrompt = null;
+      if (onConfirm) onConfirm();
+      renderControlsModal(node, body);
+    });
+    const cancelBtn = document.createElement("button");
+    cancelBtn.textContent = prompt.cancelLabel || "Cancel";
+    cancelBtn.addEventListener("click", () => {
+      const onCancel = prompt.onCancel;
+      ui.confirmPrompt = null;
+      if (onCancel) onCancel();
+      renderControlsModal(node, body);
+    });
+    actionsRow.append(confirmBtn, cancelBtn);
+    panel.append(title, message, actionsRow);
+    body.appendChild(panel);
+  };
   const hint = document.createElement("div");
   hint.style.fontSize = "12px";
   hint.style.opacity = "0.8";
@@ -2618,6 +2749,7 @@ function renderControlsModal(node, body) {
     ? `Press a key for ${actions.find((a) => a.id === ui.captureAction)?.label || ""} (Esc to cancel)`
     : "Click Add to capture a key binding.";
   body.appendChild(hint);
+  renderConfirmPrompt();
   if (ui.captureAction) {
     const cancel = document.createElement("button");
     cancel.textContent = "Cancel Capture";
@@ -2675,17 +2807,60 @@ function renderControlsModal(node, body) {
     const addBtn = document.createElement("button");
     addBtn.textContent = "Add";
     addBtn.addEventListener("click", () => {
+      ui.confirmPrompt = null;
       ui.captureAction = action.id;
       renderControlsModal(node, body);
     });
     const resetBtn = document.createElement("button");
     resetBtn.textContent = "Reset";
     resetBtn.addEventListener("click", () => {
-      updateConfig(node, (next) => {
-        next.bindings[action.id] = cloneDeep(DEFAULT_CONFIG.bindings[action.id]);
-        return next;
+      const defaults = cloneDeep(DEFAULT_CONFIG.bindings[action.id] || []);
+      const config = getConfig(node);
+      const conflicts = [];
+      defaults.forEach((value) => {
+        const conflictId = findBindingConflict(config.bindings, action.id, value);
+        if (conflictId) {
+          conflicts.push({ key: value, action: conflictId });
+        }
       });
-      updateBackendState(node);
+      const applyReset = () => {
+        updateConfig(node, (next) => {
+          next.bindings[action.id] = defaults;
+          if (conflicts.length) {
+            conflicts.forEach((conflict) => {
+              const list = Array.isArray(next.bindings[conflict.action])
+                ? next.bindings[conflict.action]
+                : [];
+              next.bindings[conflict.action] = list.filter(
+                (value) => normalizeBindingValue(value) !== normalizeBindingValue(conflict.key),
+              );
+            });
+          }
+          return next;
+        });
+        updateBackendState(node);
+      };
+      if (conflicts.length) {
+        const lines = conflicts.map((conflict) =>
+          `• ${formatKeyLabel(conflict.key)} is assigned to ${CONTROL_ACTION_LABELS[conflict.action] || conflict.action}`,
+        );
+        ui.confirmPrompt = {
+          title: "Reset keys?",
+          lines: [
+            "Resetting will remove keys from other controls:",
+            ...lines,
+          ],
+          confirmLabel: "Reset",
+          cancelLabel: "Cancel",
+          onConfirm: () => {
+            applyReset();
+          },
+          onCancel: null,
+        };
+        renderControlsModal(node, body);
+        return;
+      }
+      applyReset();
       renderControlsModal(node, body);
     });
     row.append(label, keys, addBtn, resetBtn);
@@ -2706,6 +2881,45 @@ function openColorsModal(node) {
   renderColorsModal(node, body);
 }
 
+function createTetrominoLabel(shape, color) {
+  if (!shape || !SHAPES[shape]) {
+    const label = document.createElement("div");
+    label.textContent = shape || "";
+    return label;
+  }
+  const cellSize = 14;
+  const wrapper = document.createElement("div");
+  wrapper.style.position = "relative";
+  wrapper.style.display = "inline-block";
+  wrapper.setAttribute("aria-label", shape);
+  const cells = SHAPES[shape][0];
+  let minX = 99;
+  let minY = 99;
+  let maxX = -99;
+  let maxY = -99;
+  cells.forEach(([x, y]) => {
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  });
+  const width = maxX - minX + 1;
+  const height = maxY - minY + 1;
+  wrapper.style.width = `${width * cellSize}px`;
+  wrapper.style.height = `${height * cellSize}px`;
+  cells.forEach(([x, y]) => {
+    const block = document.createElement("div");
+    block.style.position = "absolute";
+    block.style.left = `${(x - minX) * cellSize}px`;
+    block.style.top = `${(y - minY) * cellSize}px`;
+    block.style.width = `${cellSize - 1}px`;
+    block.style.height = `${cellSize - 1}px`;
+    block.style.background = color;
+    wrapper.appendChild(block);
+  });
+  return wrapper;
+}
+
 function renderColorsModal(node, body) {
   body.innerHTML = "";
   const config = getConfig(node);
@@ -2723,11 +2937,20 @@ function renderColorsModal(node, body) {
   items.forEach((item) => {
     const row = document.createElement("div");
     row.style.display = "grid";
-    row.style.gridTemplateColumns = "120px 1fr auto";
+    row.style.gridTemplateColumns = "140px 1fr auto";
     row.style.gap = "8px";
     row.style.alignItems = "center";
     const label = document.createElement("div");
-    label.textContent = item.label;
+    label.style.display = "flex";
+    label.style.alignItems = "center";
+    label.style.justifyContent = "center";
+    const isTetromino = item.id.startsWith("color_") && item.label.length === 1;
+    if (isTetromino) {
+      const color = config.colors[item.id];
+      label.appendChild(createTetrominoLabel(item.label, color));
+    } else {
+      label.textContent = item.label;
+    }
     const swatch = document.createElement("div");
     const value =
       item.id === "grid_color" ? config.grid_color : config.colors[item.id];
@@ -2789,6 +3012,25 @@ function openThemeModal(node) {
 function renderThemeModal(node, body) {
   body.innerHTML = "";
   const config = getConfig(node);
+  const ensureThemePreset = (next, theme) => {
+    if (!next.theme_colors) next.theme_colors = cloneDeep(DEFAULT_CONFIG.theme_colors);
+    if (!next.theme_colors[theme]) {
+      next.theme_colors[theme] = cloneDeep(DEFAULT_CONFIG.theme_colors[theme]);
+    }
+    return next.theme_colors[theme];
+  };
+  const themeSwatches = [
+    { name: "Red", hex: "#FF3B30" },
+    { name: "Orange", hex: "#FF9500" },
+    { name: "Yellow", hex: "#FFCC00" },
+    { name: "Green", hex: "#34C759" },
+    { name: "Teal", hex: "#00C7BE" },
+    { name: "Blue", hex: "#0A84FF" },
+    { name: "Indigo", hex: "#5E5CE6" },
+    { name: "Purple", hex: "#BF5AF2" },
+    { name: "Pink", hex: "#FF2D55" },
+    { name: "Gray", hex: "#8E8E93" },
+  ];
   const themeRow = document.createElement("div");
   themeRow.style.display = "flex";
   themeRow.style.gap = "8px";
@@ -2807,6 +3049,43 @@ function renderThemeModal(node, body) {
     });
     themeRow.appendChild(btn);
   });
+  const swatchRow = document.createElement("div");
+  swatchRow.style.display = "grid";
+  swatchRow.style.gridTemplateColumns = "repeat(10, minmax(0, 1fr))";
+  swatchRow.style.gap = "6px";
+  swatchRow.style.width = "100%";
+  themeSwatches.forEach((swatch) => {
+    const btn = document.createElement("div");
+    btn.title = swatch.name;
+    btn.dataset.tnSwatch = "true";
+    btn.style.width = "100%";
+    btn.style.height = "22px";
+    btn.style.borderRadius = "4px";
+    btn.style.background = swatch.hex;
+    btn.style.border = `1px solid ${getThemeColors(node).panel_border}`;
+    btn.style.cursor = "pointer";
+    btn.style.boxSizing = "border-box";
+    btn.tabIndex = 0;
+    btn.setAttribute("role", "button");
+    const applySwatch = () => {
+      updateConfig(node, (next) => {
+        const preset = ensureThemePreset(next, next.theme);
+        const palette = buildThemePaletteFromSwatch(swatch.hex, next.theme);
+        Object.assign(preset, palette);
+        return next;
+      });
+      renderThemeModal(node, body);
+      node.setDirtyCanvas(true, true);
+    };
+    btn.addEventListener("click", applySwatch);
+    btn.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        applySwatch();
+        event.preventDefault();
+      }
+    });
+    swatchRow.appendChild(btn);
+  });
   const resetBtn = document.createElement("button");
   resetBtn.textContent = "Reset Theme Colors";
   resetBtn.addEventListener("click", () => {
@@ -2817,7 +3096,7 @@ function renderThemeModal(node, body) {
     renderThemeModal(node, body);
     node.setDirtyCanvas(true, true);
   });
-  body.append(themeRow, resetBtn);
+  body.append(themeRow, swatchRow, resetBtn);
 
   const settings = config.theme_settings || DEFAULT_CONFIG.theme_settings;
   if (config.theme === "glass") {
@@ -3844,6 +4123,16 @@ function getSelectedLiveNode(allowFallback = false) {
   return fallback;
 }
 
+function getCaptureNode() {
+  const nodes = app.graph?._nodes || [];
+  for (const node of nodes) {
+    if (node?.comfyClass === NODE_CLASS && node.__tetrisUi?.captureAction) {
+      return node;
+    }
+  }
+  return null;
+}
+
 function isNodeSelected(node) {
   const selected = app.canvas?.selected_nodes;
   if (!selected) return false;
@@ -3855,16 +4144,25 @@ function isNodeSelected(node) {
 
 function handleKey(event) {
   if (event.target && ["INPUT", "TEXTAREA"].includes(event.target.tagName)) return;
-  const node = getSelectedLiveNode(false);
+  const node = getCaptureNode() || getSelectedLiveNode(false);
   if (!node) return;
   const live = node.__tetrisLive;
   if (!live) return;
   const ui = node.__tetrisUi;
   if (ui?.captureAction) {
+    if (ui.confirmPrompt) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (event.key && event.key.toLowerCase() === "escape") {
       ui.captureAction = null;
       if (ui.modal?.body) {
-        renderControlsModal(node, ui.modal.body);
+        if (ui.modal.kind === "settings") {
+          renderSettingsModal(node, ui.modal.body, ui.modal.activeTab || "controls");
+        } else {
+          renderControlsModal(node, ui.modal.body);
+        }
       }
       event.preventDefault();
       event.stopPropagation();
@@ -3872,6 +4170,53 @@ function handleKey(event) {
     }
     const binding = bindingFromEvent(event);
     if (!binding) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    const config = getConfig(node);
+    const conflictId = findBindingConflict(config.bindings, ui.captureAction, binding);
+    if (conflictId) {
+      const conflictLabel = CONTROL_ACTION_LABELS[conflictId] || conflictId;
+      const currentLabel = CONTROL_ACTION_LABELS[ui.captureAction] || ui.captureAction;
+      const actionId = ui.captureAction;
+      ui.captureAction = null;
+      ui.confirmPrompt = {
+        title: "Key already in use",
+        lines: [
+          `"${formatKeyLabel(binding)}" is already assigned to ${conflictLabel}.`,
+          `Switch it to ${currentLabel}?`,
+        ],
+        confirmLabel: "Switch",
+        cancelLabel: "Cancel",
+        onConfirm: () => {
+          updateConfig(node, (next) => {
+            const list = Array.isArray(next.bindings[actionId])
+              ? next.bindings[actionId]
+              : [];
+            if (!list.includes(binding)) {
+              list.push(binding);
+            }
+            next.bindings[actionId] = list.slice(0, 5);
+            const conflictList = Array.isArray(next.bindings[conflictId])
+              ? next.bindings[conflictId]
+              : [];
+            next.bindings[conflictId] = conflictList.filter(
+              (value) => normalizeBindingValue(value) !== normalizeBindingValue(binding),
+            );
+            return next;
+          });
+          updateBackendState(node);
+        },
+        onCancel: null,
+      };
+      if (ui.modal?.body) {
+        if (ui.modal.kind === "settings") {
+          renderSettingsModal(node, ui.modal.body, ui.modal.activeTab || "controls");
+        } else {
+          renderControlsModal(node, ui.modal.body);
+        }
+      }
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -3884,12 +4229,24 @@ function handleKey(event) {
         list.push(binding);
       }
       next.bindings[ui.captureAction] = list.slice(0, 5);
+      if (conflictId) {
+        const conflictList = Array.isArray(next.bindings[conflictId])
+          ? next.bindings[conflictId]
+          : [];
+        next.bindings[conflictId] = conflictList.filter(
+          (value) => normalizeBindingValue(value) !== normalizeBindingValue(binding),
+        );
+      }
       return next;
     });
     updateBackendState(node);
     ui.captureAction = null;
     if (ui.modal?.body) {
-      renderControlsModal(node, ui.modal.body);
+      if (ui.modal.kind === "settings") {
+        renderSettingsModal(node, ui.modal.body, ui.modal.activeTab || "controls");
+      } else {
+        renderControlsModal(node, ui.modal.body);
+      }
     }
     event.preventDefault();
     event.stopPropagation();
@@ -3901,6 +4258,21 @@ function handleKey(event) {
       event.preventDefault();
       event.stopPropagation();
     }
+    if (ui.modal.kind === "settings" && !ui.captureAction) {
+      const key = event.key ? event.key.toLowerCase() : "";
+      const tabMap = {
+        s: "settings",
+        c: "controls",
+        t: "colors",
+        u: "theme",
+      };
+      const targetTab = tabMap[key];
+      if (targetTab && ui.modal.body) {
+        renderSettingsModal(node, ui.modal.body, targetTab);
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    }
     return;
   }
 
@@ -3909,6 +4281,17 @@ function handleKey(event) {
   const matches = (binding) => keyMatches(event, binding);
   const resetPressed = matches(bindings.reset);
   const pausePressed = matches(bindings.pause);
+  const settingsPressed = matches(bindings.settings);
+  if (settingsPressed) {
+    if (ui?.modal?.kind === "settings") {
+      closeModal(node);
+    } else {
+      openSettingsModal(node);
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   if (state.gameOver) {
     if (resetPressed || pausePressed) {
       resetNode(node);
@@ -3927,7 +4310,8 @@ function handleKey(event) {
       || matches(bindings.hardDrop)
       || matches(bindings.hold)
       || matches(bindings.reset)
-      || matches(bindings.pause))
+      || matches(bindings.pause)
+      || matches(bindings.settings))
   ) {
     event.preventDefault();
     event.stopPropagation();
@@ -4165,6 +4549,19 @@ function normalizeBindingValue(value) {
   return raw;
 }
 
+function findBindingConflict(bindings, actionId, binding) {
+  const normalized = normalizeBindingValue(binding);
+  if (!normalized) return null;
+  for (const [key, values] of Object.entries(bindings || {})) {
+    if (key === actionId) continue;
+    const list = Array.isArray(values) ? values : [values];
+    if (list.some((value) => normalizeBindingValue(value) === normalized)) {
+      return key;
+    }
+  }
+  return null;
+}
+
 function getControlBindings(node) {
   const config = getConfig(node);
   const normalizeList = (values) =>
@@ -4181,6 +4578,7 @@ function getControlBindings(node) {
     hold: normalizeList(config.bindings.hold),
     reset: normalizeList(config.bindings.reset),
     pause: normalizeList(config.bindings.pause),
+    settings: normalizeList(config.bindings.settings),
   };
 }
 
