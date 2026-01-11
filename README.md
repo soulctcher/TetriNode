@@ -17,7 +17,9 @@ A ComfyUI custom node pack that embeds a playable Tetris game inside a node UI, 
 - Level progression with official fall speeds
 - Pause/Play and Reset controls
 - Seeded piece generation with a standard seed widget available
-- In-node toolbar with a single Settings modal (tabs: Settings, Controls, Tetrominos, UI Themes)
+- In-node toolbar with a single Settings modal (tabs: Settings, Controls, Block Style, Colors, UI Themes)
+- Block Style presets with extensive style sliders and exportable settings
+- Optional block textures for specific presets (Brushed Metal, Wooden Block, Concrete)
 
 ## Nodes
 
@@ -47,7 +49,8 @@ All configuration now lives inside TetriNode (no external options node). The Set
 
 - **Settings**: Toggles (controls/ghost/next/hold/grid), lock-down mode, level progression, start level, and queue size.
 - **Controls**: Click Add to capture a key (up to 5 per action). Remove any binding with the `X`, or reset per action. Capture supports the same allowed keys as before and shows human-friendly labels.
-- **Tetrominos**: Per-piece colors plus background and grid colors. Supports hex and RGBA (alpha for pieces and grid).
+- **Block Style**: Presets plus detailed style sliders (border, bevel, gradients, glow, shadows, etc.) with per-slider reset and export.
+- **Colors**: Per-piece colors plus background and grid colors. Tetromino colors use 6‑digit hex; grid supports alpha.
 - **UI Themes**: Glass/Flat/Neon/Minimal presets with editable colors and a “Reset Theme Colors” button.
 
 ## Controls (Default)
