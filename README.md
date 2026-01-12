@@ -4,22 +4,23 @@
   <img src="docs/images/banner.png" width="50%">
 </p>
 
-A ComfyUI custom node pack that embeds a playable Tetris game inside a node UI, with image outputs for the live board, next-piece preview, and queue.
+A ComfyUI custom node pack that embeds a playable Tetris game inside a node UI, with an image output for the live board.
 
 ## Features
 
 - Live, playable Tetris inside the node UI
-- Board, next-piece, and queue image outputs
-- Hold queue, next piece, and configurable queue display
+- Matrix image output for the live board
+- Hold, next piece, and queue panels inside the node UI
 - Optional background image (scaled to cover, center-cropped)
-- Optional ghost piece and playfield grid (optional)
+- Optional ghost piece and playfield grid
 - Official Tetris Guideline-based scoring (lines, T-Spins, drops, and back-to-back bonuses)
 - Level progression with official fall speeds
-- Pause/Play and Reset controls
+- Pause/Play, Reset, Load State, and Save State controls
 - Seeded piece generation with a standard seed widget available
-- In-node toolbar with a single Settings modal (tabs: Settings, Controls, Block Style, Colors, UI Themes)
-- Block Style presets with extensive style sliders and exportable settings
-- Optional block textures for specific presets (Brushed Metal, Wooden Block, Concrete)
+- In-node toolbar with a single Settings screen (tabs: Settings, Controls, Block Style, Colors, UI Themes)
+- Block Style presets with extensive style sliders and per-slider reset
+- Optional block textures (Pixel Art, Brushed Metal, Wooden Block, Concrete, Toxic Slime)
+- Randomized texture sampling per block for supported textures
 
 ## Nodes
 
@@ -35,23 +36,40 @@ Main gameplay node.
 
 **Outputs**
 - `matrix` (IMAGE): current board
-- `next_piece` (IMAGE): preview image
-- `queue` (IMAGE): queue preview image
-- `state` (STRING): serialized game state
 
 **UI controls**
-- **Top toolbar**: Load State, Reset, Pause/Play, and a Settings modal.
-- **Load State**: Opens a modal to paste a serialized state. The game pauses after loading.
+- **Top toolbar**: Load State, Save State, Reset, Pause/Play, and a Settings screen.
+- **Load State**: Opens a screen to paste a serialized state.
 
-### Settings modal
+![Load State screen](docs/images/load_state.png)
 
-All configuration now lives inside TetriNode (no external options node). The Settings modal is tabbed.
+- **Save State**: Opens a screen with the current state JSON for copy/paste.
+
+![Save State screen](docs/images/save_state.png)
+
+### Settings screen
+
+All configuration now lives inside TetriNode (no external options node). The Settings screen is tabbed.
 
 - **Settings**: Toggles (controls/ghost/next/hold/grid), lock-down mode, level progression, start level, and queue size.
+
+![Settings tab](docs/images/settings.png)
+
 - **Controls**: Click Add to capture a key (up to 5 per action). Remove any binding with the `X`, or reset per action. Capture supports the same allowed keys as before and shows human-friendly labels.
-- **Block Style**: Presets plus detailed style sliders (border, bevel, gradients, glow, shadows, etc.) with per-slider reset and export.
-- **Colors**: Per-piece colors plus background and grid colors. Tetromino colors use 6‑digit hex; grid supports alpha.
+
+![Controls tab](docs/images/controls.png)
+
+- **Block Style**: Presets plus detailed style sliders (border, bevel, gradients, glow, shadows, etc.) with per-slider reset.
+
+![Block Style tab](docs/images/block_style.png)
+
+- **Colors**: Per-piece colors plus background and grid colors. Presets dropdown includes multiple palettes; tetromino colors use 6‑digit hex; grid supports alpha.
+
+![Colors tab](docs/images/colors.png)
+
 - **UI Themes**: Glass/Flat/Neon/Minimal presets with editable colors and a “Reset Theme Colors” button.
+
+![UI Themes tab](docs/images/ui_themes.png)
 
 ## Controls (Default)
 
