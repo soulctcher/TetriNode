@@ -457,6 +457,8 @@ function createState(seed, startLevel = 1, levelProgression = "fixed") {
     softDrop: false,
     lastAction: null,
     lastRotateKick: null,
+    lastLockedPiece: null,
+    rotateSinceLock: false,
     tspin: "none",
     lockMoves: 0,
     lowestY: pieceBottomY(piece),
@@ -708,6 +710,7 @@ function spawnNext(state) {
   state.lowestY = pieceBottomY(state.piece);
   state.locking = false;
   state.lockElapsed = 0;
+  state.rotateSinceLock = false;
   updateLevel(state);
   if (collides(state.board, state.piece)) {
     state.gameOver = true;
@@ -735,7 +738,11 @@ function stepDown(state) {
     state.locking = false;
     state.lockElapsed = 0;
     updateLowestY(state);
-    state.lastAction = "move";
+    if (state.softDrop) {
+      state.lastAction = "move";
+      state.lastRotateKick = null;
+      state.rotateSinceLock = false;
+    }
     if (state.softDrop) {
       state.score += 1;
     }
@@ -755,6 +762,13 @@ function cornerOccupied(board, x, y) {
 function tspinType(state) {
   const piece = state.piece;
   if (piece.shape !== "T" || state.lastAction !== "rotate") return "none";
+  const type = tspinTypeForPiece(state.board, piece);
+  if (type === "none") return "none";
+  if (state.lastRotateKick === 4) return "tspin";
+  return type;
+}
+
+function tspinTypeForPiece(board, piece) {
   const cx = piece.x + 1;
   const cy = piece.y + 1;
   const corners = {
@@ -776,9 +790,8 @@ function tspinType(state) {
     front = ["A", "C"];
     back = ["B", "D"];
   }
-  const frontHits = front.reduce((acc, k) => acc + (cornerOccupied(state.board, ...corners[k]) ? 1 : 0), 0);
-  const backHits = back.reduce((acc, k) => acc + (cornerOccupied(state.board, ...corners[k]) ? 1 : 0), 0);
-  if (state.lastRotateKick === 4) return "tspin";
+  const frontHits = front.reduce((acc, k) => acc + (cornerOccupied(board, ...corners[k]) ? 1 : 0), 0);
+  const backHits = back.reduce((acc, k) => acc + (cornerOccupied(board, ...corners[k]) ? 1 : 0), 0);
   if (frontHits + backHits < 3) return "none";
   if (frontHits === 2 && backHits === 2) return "tspin";
   if (frontHits === 2 && backHits >= 1) return "tspin";
@@ -787,6 +800,12 @@ function tspinType(state) {
 }
 
 function settlePiece(state) {
+  state.lastLockedPiece = {
+    shape: state.piece.shape,
+    x: state.piece.x,
+    y: state.piece.y,
+    rot: state.piece.rot,
+  };
   lockPiece(state.board, state.piece, state.boardTextures, ensurePieceTextureTransforms(state.piece));
   state.tspin = tspinType(state);
   const levelBefore = state.level;
@@ -796,6 +815,7 @@ function settlePiece(state) {
   if (result.textures) {
     state.boardTextures = result.textures;
   }
+  const hadTspin = state.tspin !== "none";
   if (result.cleared > 0) {
     state.lines += result.cleared;
     state.comboStreak = (state.comboStreak || 0) + 1;
@@ -805,11 +825,14 @@ function settlePiece(state) {
     if (result.cleared === 4) {
       state.tetrises = (state.tetrises || 0) + 1;
     }
-    if (state.tspin !== "none") {
+    if (hadTspin) {
       state.tspins = (state.tspins || 0) + 1;
     }
   } else {
     state.comboStreak = 0;
+    if (hadTspin) {
+      state.tspins = (state.tspins || 0) + 1;
+    }
   }
   const scored = scoreForClear(levelBefore, result.cleared, state.tspin, state.b2bActive);
   state.score += scored.points;
@@ -888,6 +911,8 @@ function move(state, dx, dy, opts = {}) {
     state.piece = moved;
     if (!opts.skipLastAction) {
       state.lastAction = "move";
+      state.lastRotateKick = null;
+      state.rotateSinceLock = false;
     }
     updateLowestY(state);
     return true;
@@ -901,6 +926,7 @@ function rotate(state, delta) {
     state.piece = rotated.piece;
     state.lastAction = "rotate";
     state.lastRotateKick = rotated.kick;
+    state.rotateSinceLock = true;
     updateLowestY(state);
     return true;
   }
@@ -911,26 +937,26 @@ function kickTable(shape, fromRot, toRot) {
   if (shape === "O") return [[0, 0]];
   if (shape === "I") {
     const table = {
-      "0>1": [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2]],
-      "1>0": [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2]],
-      "1>2": [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]],
-      "2>1": [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1]],
-      "2>3": [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2]],
-      "3>2": [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2]],
-      "3>0": [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1]],
-      "0>3": [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]],
+      "0>1": [[0, 0], [-2, 0], [1, 0], [-2, 1], [1, -2]],
+      "1>0": [[0, 0], [2, 0], [-1, 0], [2, -1], [-1, 2]],
+      "1>2": [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
+      "2>1": [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
+      "2>3": [[0, 0], [2, 0], [-1, 0], [2, -1], [-1, 2]],
+      "3>2": [[0, 0], [-2, 0], [1, 0], [-2, 1], [1, -2]],
+      "3>0": [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
+      "0>3": [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
     };
     return table[`${fromRot}>${toRot}`] || [[0, 0]];
   }
   const table = {
-    "0>1": [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
-    "1>0": [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
-    "1>2": [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
-    "2>1": [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
-    "2>3": [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
-    "3>2": [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
-    "3>0": [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
-    "0>3": [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+    "0>1": [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+    "1>0": [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+    "1>2": [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+    "2>1": [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+    "2>3": [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+    "3>2": [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+    "3>0": [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+    "0>3": [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
   };
   return table[`${fromRot}>${toRot}`] || [[0, 0]];
 }
@@ -939,10 +965,34 @@ function rotateWithKick(board, piece, delta) {
   const fromRot = piece.rot % 4;
   const toRot = (fromRot + delta + 4) % 4;
   const kicks = kickTable(piece.shape, fromRot, toRot);
+  const debug = typeof window !== "undefined" && window.__tspinDebug?.enabled && piece.shape === "T";
   for (let i = 0; i < kicks.length; i += 1) {
     const [dx, dy] = kicks[i];
     const candidate = { ...piece, rot: toRot, x: piece.x + dx, y: piece.y + dy };
-    if (!collides(board, candidate)) return { piece: candidate, kick: i };
+    const blocked = collides(board, candidate);
+    if (debug) {
+      console.log(
+        `[tspin-debug] kick=${i} delta=${delta} from=(${piece.x},${piece.y},${fromRot}) to=(${candidate.x},${candidate.y},${toRot}) blocked=${blocked}`
+      );
+      if (i === 4) {
+        const cells = SHAPES[piece.shape]?.[toRot] || [];
+        const occupied = cells.map(([cx, cy]) => {
+          const x = candidate.x + cx;
+          const y = candidate.y + cy;
+          let status = "empty";
+          if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H_TOTAL) {
+            status = "oob";
+          } else if (board[y]?.[x]) {
+            status = "blocked";
+          }
+          return { x, y, status };
+        });
+        console.log(`[tspin-debug] kick=4 cells=${JSON.stringify(occupied)}`);
+      }
+    }
+    if (!blocked) {
+      return { piece: candidate, kick: i };
+    }
   }
   return null;
 }

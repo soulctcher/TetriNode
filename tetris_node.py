@@ -1281,25 +1281,25 @@ def _kick_table(shape, rot_from, rot_to):
         return [(0, 0)]
     if shape == "I":
         table = {
-            (0, 1): [(0, 0), (-2, 0), (1, 0), (-2, -1), (1, 2)],
-            (1, 0): [(0, 0), (2, 0), (-1, 0), (2, 1), (-1, -2)],
-            (1, 2): [(0, 0), (-1, 0), (2, 0), (-1, 2), (2, -1)],
-            (2, 1): [(0, 0), (1, 0), (-2, 0), (1, -2), (-2, 1)],
-            (2, 3): [(0, 0), (2, 0), (-1, 0), (2, 1), (-1, -2)],
-            (3, 2): [(0, 0), (-2, 0), (1, 0), (-2, -1), (1, 2)],
-            (3, 0): [(0, 0), (1, 0), (-2, 0), (1, -2), (-2, 1)],
-            (0, 3): [(0, 0), (-1, 0), (2, 0), (-1, 2), (2, -1)],
+            (0, 1): [(0, 0), (-2, 0), (1, 0), (-2, 1), (1, -2)],
+            (1, 0): [(0, 0), (2, 0), (-1, 0), (2, -1), (-1, 2)],
+            (1, 2): [(0, 0), (-1, 0), (2, 0), (-1, -2), (2, 1)],
+            (2, 1): [(0, 0), (1, 0), (-2, 0), (1, 2), (-2, -1)],
+            (2, 3): [(0, 0), (2, 0), (-1, 0), (2, -1), (-1, 2)],
+            (3, 2): [(0, 0), (-2, 0), (1, 0), (-2, 1), (1, -2)],
+            (3, 0): [(0, 0), (1, 0), (-2, 0), (1, 2), (-2, -1)],
+            (0, 3): [(0, 0), (-1, 0), (2, 0), (-1, -2), (2, 1)],
         }
         return table.get((rot_from, rot_to), [(0, 0)])
     table = {
-        (0, 1): [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
-        (1, 0): [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
-        (1, 2): [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
-        (2, 1): [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
-        (2, 3): [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
-        (3, 2): [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
-        (3, 0): [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
-        (0, 3): [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
+        (0, 1): [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
+        (1, 0): [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
+        (1, 2): [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
+        (2, 1): [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
+        (2, 3): [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
+        (3, 2): [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
+        (3, 0): [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
+        (0, 3): [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
     }
     return table.get((rot_from, rot_to), [(0, 0)])
 
@@ -1321,8 +1321,8 @@ def _corner_occupied(board, x, y):
     return board[y][x] != 0
 
 
-def _tspin_type(board, piece, last_action, last_rotate_kick):
-    if piece["shape"] != "T" or last_action != "rotate":
+def _tspin_type_from_corners(board, piece):
+    if piece["shape"] != "T":
         return "none"
     cx = piece["x"] + 1
     cy = piece["y"] + 1
@@ -1347,8 +1347,6 @@ def _tspin_type(board, piece, last_action, last_rotate_kick):
         back = ("B", "D")
     front_hits = sum(_corner_occupied(board, *corners[k]) for k in front)
     back_hits = sum(_corner_occupied(board, *corners[k]) for k in back)
-    if last_rotate_kick == 4:
-        return "tspin"
     total_hits = front_hits + back_hits
     if total_hits < 3:
         return "none"
@@ -1359,6 +1357,17 @@ def _tspin_type(board, piece, last_action, last_rotate_kick):
     if back_hits == 2 and front_hits >= 1:
         return "mini"
     return "none"
+
+
+def _tspin_type(board, piece, last_action, last_rotate_kick):
+    if piece["shape"] != "T" or last_action != "rotate":
+        return "none"
+    corners = _tspin_type_from_corners(board, piece)
+    if corners == "none":
+        return "none"
+    if last_rotate_kick == 4:
+        return "tspin"
+    return corners
 
 
 class TetriNode:
@@ -1494,16 +1503,19 @@ class TetriNode:
             if not _collides(board, moved):
                 piece = moved
                 state_obj["last_action"] = "move"
+                state_obj["last_rotate_kick"] = None
         elif action == "right":
             moved = _move(piece, 1, 0)
             if not _collides(board, moved):
                 piece = moved
                 state_obj["last_action"] = "move"
+                state_obj["last_rotate_kick"] = None
         elif action in {"down", "soft_drop"}:
             moved = _move(piece, 0, 1)
             if not _collides(board, moved):
                 piece = moved
                 state_obj["last_action"] = "move"
+                state_obj["last_rotate_kick"] = None
                 if action == "soft_drop":
                     state_obj["score"] += 1
         elif action == "rotate_cw":
@@ -1546,7 +1558,6 @@ class TetriNode:
             moved = _move(piece, 0, 1)
             if not _collides(board, moved):
                 piece = moved
-                state_obj["last_action"] = "move"
             else:
                 _lock_piece(board, piece)
                 state_obj["tspin"] = _tspin_type(
