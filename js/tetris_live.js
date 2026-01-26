@@ -28,7 +28,7 @@ const CONTROL_MIN = 110;
 const DAS_MS = 300;
 const ARR_MS = 56;
 const IMAGE_CACHE = new Map();
-const TETRINODE_VERSION = "2.0.0";
+const TETRINODE_VERSION = "2.1.0";
 const LOAD_ICON_VIEWBOX = 1536;
 const LOAD_ICON_PATH =
   "M316 1180H1220Q1280 1180 1280 1240Q1280 1300 1220 1300H316Q256 1300 256 1240Q256 1180 316 1180ZM708 360H828Q888 360 888 420V780H948Q988 780 988 820Q988 840 974 856L796 1034Q780 1050 768 1050Q756 1050 740 1034L562 856Q548 840 548 820Q548 780 588 780H648V420Q648 360 708 360Z";
@@ -185,6 +185,10 @@ const DEFAULT_CONFIG = {
   queue_size: 6,
   grid_enabled: true,
   grid_color: "rgba(255,255,255,0.2)",
+  anim_hard_drop_trail: true,
+  anim_lock_flash: true,
+  anim_line_clear: true,
+  anim_score_toasts: true,
 };
 
 const CONTROL_ACTIONS = [
@@ -409,6 +413,16 @@ function clearLines(board, textureBoard = null) {
   return { board: remaining, textures: remainingTextures, cleared };
 }
 
+function fullLineRows(board) {
+  const rows = [];
+  for (let y = 0; y < board.length; y += 1) {
+    if (board[y].every((cell) => cell !== 0)) {
+      rows.push(y);
+    }
+  }
+  return rows;
+}
+
 function createState(seed, startLevel = 1, levelProgression = "fixed") {
   const rng = createRng(seed);
   const bag = shuffledBag(rng);
@@ -458,6 +472,13 @@ function createState(seed, startLevel = 1, levelProgression = "fixed") {
     lastAction: null,
     lastRotateKick: null,
     lastLockedPiece: null,
+    lockFlash: null,
+    lineClear: null,
+    clearing: false,
+    pendingClear: null,
+    hardDropTrail: null,
+    actionToast: null,
+    b2bStreak: 0,
     rotateSinceLock: false,
     tspin: "none",
     lockMoves: 0,
@@ -678,6 +699,32 @@ function scoreForClear(level, lines, tspinType, b2bActive) {
   return { points: base + bonus, b2bActive: nextB2b };
 }
 
+function actionToastText(scoredPoints, colorKey) {
+  if (!scoredPoints || scoredPoints <= 0) return null;
+  return { text: `+${scoredPoints}`, colorKey };
+}
+
+function toastScaleForChain(comboStreak, b2bStreak) {
+  const chain = Math.max(comboStreak || 0, b2bStreak || 0);
+  return Math.min(1.6, 1 + 0.2 * Math.max(0, chain - 1));
+}
+
+function setActionToast(state, info, anchor, scale = 1, duration = 1200) {
+  if (state.options?.anim_score_toasts === false) return;
+  if (!info || !info.text) return;
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+  state.actionToast = {
+    text: info.text,
+    colorKey: info.colorKey,
+    anchorX: anchor?.x ?? null,
+    anchorY: anchor?.y ?? null,
+    scale,
+    until: now + duration,
+    start: now,
+    duration,
+  };
+}
+
 function ensureBag(state) {
   if (state.bag.length === 0) {
     state.bag = shuffledBag(state.rng);
@@ -800,6 +847,13 @@ function tspinTypeForPiece(board, piece) {
 }
 
 function settlePiece(state) {
+  const now = typeof performance !== "undefined" ? performance.now() : 0;
+  const flashCells = new Set(pieceCells(state.piece).map(([x, y]) => `${x},${y}`));
+  if (state.options?.anim_lock_flash !== false) {
+    state.lockFlash = { until: now + 220, duration: 220, elapsed: 0, start: now, cells: flashCells };
+  } else {
+    state.lockFlash = null;
+  }
   state.lastLockedPiece = {
     shape: state.piece.shape,
     x: state.piece.x,
@@ -808,21 +862,104 @@ function settlePiece(state) {
   };
   lockPiece(state.board, state.piece, state.boardTextures, ensurePieceTextureTransforms(state.piece));
   state.tspin = tspinType(state);
+  const fullRows = fullLineRows(state.board);
   const levelBefore = state.level;
   const prevB2b = state.b2bActive;
-  const result = clearLines(state.board, state.boardTextures);
-  state.board = result.board;
-  if (result.textures) {
-    state.boardTextures = result.textures;
+  const center = pieceCells(state.piece).reduce(
+    (acc, [x, y]) => {
+      acc.x += x + 0.5;
+      acc.y += y + 0.5;
+      return acc;
+    },
+    { x: 0, y: 0 },
+  );
+  const cellCount = Math.max(1, pieceCells(state.piece).length);
+  const anchorX = center.x / cellCount;
+  const anchorY = center.y / cellCount;
+  if (fullRows.length) {
+    const result = clearLines(state.board, state.boardTextures);
+    const scored = scoreForClear(levelBefore, result.cleared, state.tspin, state.b2bActive);
+    const qualifies = scored.b2bActive;
+    const nextCombo = (state.comboStreak || 0) + 1;
+    const nextB2bStreak = qualifies ? ((prevB2b ? (state.b2bStreak || 0) + 1 : 1)) : 0;
+    const pendingClear = {
+      result,
+      cleared: result.cleared,
+      tspin: state.tspin,
+      rows: fullRows,
+      levelBefore,
+      prevB2b,
+      scored,
+    };
+    if (state.options?.anim_line_clear === false) {
+      applyPendingClear(state, pendingClear);
+      state.locking = false;
+      state.lockElapsed = 0;
+      state.boardDirty = true;
+      return;
+    }
+    state.pendingClear = pendingClear;
+    state.clearing = true;
+    state.lineClear = {
+      rows: fullRows,
+      elapsed: 0,
+      flashMs: 80,
+      wipeMs: 180 + fullRows.length * 40,
+      duration: 80 + 180 + fullRows.length * 40,
+    };
+    const topRow = Math.min(...fullRows);
+    setActionToast(
+      state,
+      actionToastText(scored.points, state.lastLockedPiece?.shape),
+      { x: anchorX, y: Math.max(HIDDEN_ROWS, topRow - 1) },
+      toastScaleForChain(nextCombo, nextB2bStreak),
+    );
+    state.locking = false;
+    state.lockElapsed = 0;
+    state.boardDirty = true;
+    return;
   }
+  const result = { cleared: 0 };
   const hadTspin = state.tspin !== "none";
-  if (result.cleared > 0) {
-    state.lines += result.cleared;
+  state.comboStreak = 0;
+  if (hadTspin) {
+    state.tspins = (state.tspins || 0) + 1;
+  }
+  const scored = scoreForClear(levelBefore, result.cleared, state.tspin, state.b2bActive);
+  state.score += scored.points;
+  state.b2bActive = scored.b2bActive;
+  const qualifies = scored.b2bActive;
+  state.b2bStreak = qualifies ? ((state.b2bStreak || 0) + (prevB2b ? 1 : 1)) : 0;
+  setActionToast(
+    state,
+    actionToastText(scored.points, state.lastLockedPiece?.shape),
+    { x: anchorX, y: anchorY - 1 },
+    toastScaleForChain(state.comboStreak || 0, state.b2bStreak || 0),
+  );
+  if (state.levelProgression === "variable") {
+    state.goalLinesTotal += awardedGoalLines(result.cleared, state.tspin, prevB2b);
+  }
+  updateLevel(state);
+  state.locking = false;
+  state.lockElapsed = 0;
+  state.boardDirty = true;
+  spawnNext(state);
+}
+
+function applyPendingClear(state, pending) {
+  if (!pending) return;
+  state.board = pending.result.board;
+  if (pending.result.textures) {
+    state.boardTextures = pending.result.textures;
+  }
+  const hadTspin = pending.tspin !== "none";
+  if (pending.cleared > 0) {
+    state.lines += pending.cleared;
     state.comboStreak = (state.comboStreak || 0) + 1;
     if (state.comboStreak === 2) {
       state.comboTotal = (state.comboTotal || 0) + 1;
     }
-    if (result.cleared === 4) {
+    if (pending.cleared === 4) {
       state.tetrises = (state.tetrises || 0) + 1;
     }
     if (hadTspin) {
@@ -834,16 +971,17 @@ function settlePiece(state) {
       state.tspins = (state.tspins || 0) + 1;
     }
   }
-  const scored = scoreForClear(levelBefore, result.cleared, state.tspin, state.b2bActive);
+  const scored = pending.scored || scoreForClear(pending.levelBefore, pending.cleared, pending.tspin, state.b2bActive);
   state.score += scored.points;
   state.b2bActive = scored.b2bActive;
+  const qualifies = scored.b2bActive;
+  state.b2bStreak = qualifies
+    ? (pending.prevB2b ? (state.b2bStreak || 0) + 1 : 1)
+    : 0;
   if (state.levelProgression === "variable") {
-    state.goalLinesTotal += awardedGoalLines(result.cleared, state.tspin, prevB2b);
+    state.goalLinesTotal += awardedGoalLines(pending.cleared, pending.tspin, pending.prevB2b);
   }
   updateLevel(state);
-  state.locking = false;
-  state.lockElapsed = 0;
-  state.boardDirty = true;
   spawnNext(state);
 }
 
@@ -998,6 +1136,7 @@ function rotateWithKick(board, piece, delta) {
 }
 
 function hardDrop(state) {
+  const startY = state.piece.y;
   let moved = 0;
   while (move(state, 0, 1, { skipLastAction: true })) {
     moved += 1;
@@ -1005,6 +1144,20 @@ function hardDrop(state) {
   }
   if (moved > 0) {
     state.score += moved * 2;
+    if (state.options?.anim_hard_drop_trail !== false) {
+      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      state.hardDropTrail = {
+        shape: state.piece.shape,
+        rot: state.piece.rot,
+        x: state.piece.x,
+        startY,
+        endY: state.piece.y,
+        start: now,
+        duration: 200,
+      };
+    } else {
+      state.hardDropTrail = null;
+    }
   }
   settlePiece(state);
 }
@@ -1245,6 +1398,12 @@ function adjustColorByFactor(color, factor) {
   );
 }
 
+function colorWithAlpha(color, alpha) {
+  const parsed = parseColorComponents(color || "");
+  if (!parsed) return color;
+  return rgbaString({ r: parsed.r, g: parsed.g, b: parsed.b, a: alpha }, true);
+}
+
 function adjustColorHsl(color, saturationShift, brightnessShift) {
   const parsed = parseColorComponents(color || "");
   const hsl = rgbToHsl(parsed.r, parsed.g, parsed.b);
@@ -1281,6 +1440,15 @@ function ensureBoardCache(node, state, layout, palette) {
   const canvas = live.boardCanvas;
   const ctx = live.boardCtx;
   const style = getBlockStyle(node);
+  const animConfig = getConfig(node);
+  const clearPhase = state.clearing && state.lineClear
+    ? {
+      elapsed: state.lineClear.elapsed,
+      duration: state.lineClear.duration,
+      flashMs: state.lineClear.flashMs ?? 0,
+      wipeMs: state.lineClear.wipeMs ?? 0,
+    }
+    : null;
   const cacheKey = JSON.stringify({
     boardW,
     boardH,
@@ -1288,13 +1456,20 @@ function ensureBoardCache(node, state, layout, palette) {
     extraPx,
     palette,
     style,
+    clearPhase,
   });
   if (canvas.width !== boardW || canvas.height !== boardH) {
     canvas.width = boardW;
     canvas.height = boardH;
     live.boardDirty = true;
   }
-  const dirty = live.boardDirty || state.boardDirty;
+  const now = typeof performance !== "undefined" ? performance.now() : 0;
+  const flashActive = state.lockFlash && now < state.lockFlash.until;
+  const lockFlash = state.lockFlash;
+  const lockProgress = lockFlash && lockFlash.duration
+    ? Math.min(1, Math.max(0, (lockFlash.elapsed ?? 0) / lockFlash.duration))
+    : 0;
+  const dirty = live.boardDirty || state.boardDirty || flashActive;
   if (!dirty && live.boardCacheKey === cacheKey) {
     return canvas;
   }
@@ -1308,34 +1483,107 @@ function ensureBoardCache(node, state, layout, palette) {
       const cell = state.board[hiddenRow][x];
       if (cell) {
         const textureTransform = state.boardTextures?.[hiddenRow]?.[x] ?? null;
+        const flashKey = `${x},${hiddenRow}`;
+        const flashColor = flashActive && state.lockFlash?.cells?.has(flashKey)
+          ? adjustColorByFactor(palette[cell], 0.3)
+          : palette[cell];
         drawBlockSized(
           ctx,
           x * blockSize,
           -blockSize + extraPx,
           blockSize,
-          palette[cell],
+          flashColor,
           node,
           textureTransform,
         );
       }
     }
   }
+  const clearRows = animConfig.anim_line_clear !== false && state.clearing && state.lineClear?.rows?.length
+    ? new Set(state.lineClear.rows)
+    : null;
+  const clearElapsed = state.lineClear?.elapsed ?? 0;
+  const clearFlashMs = state.lineClear?.flashMs ?? 0;
+  const clearWipeMs = state.lineClear?.wipeMs ?? 0;
+  const clearProgress = clearWipeMs > 0
+    ? Math.min(1, Math.max(0, (clearElapsed - clearFlashMs) / clearWipeMs))
+    : 0;
+  const clearCenter = GRID_W / 2;
+  const clearMaxDist = clearCenter - 0.5;
+  let beamMin = 0;
+  let beamMax = GRID_W + GRID_H_TOTAL;
+  if (flashActive && lockFlash?.cells?.size) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const key of lockFlash.cells) {
+      const [sx, sy] = key.split(",").map(Number);
+      if (!Number.isFinite(sx) || !Number.isFinite(sy)) continue;
+      const diag = sx + sy;
+      min = Math.min(min, diag);
+      max = Math.max(max, diag);
+    }
+    if (Number.isFinite(min) && Number.isFinite(max)) {
+      beamMin = min;
+      beamMax = max;
+    }
+  }
+  const span = Math.max(1, beamMax - beamMin);
+  const beamCenter = beamMin + span * lockProgress;
+  const beamWidth = 0.65;
+
+  if (clearRows && state.lineClear && getConfig(node).anim_line_clear !== false) {
+    drawTetrisGlow(ctx, 0, extraPx, blockSize, state.lineClear.rows, clearElapsed, state.lineClear.duration);
+  }
+
   for (let y = 0; y < GRID_H_VISIBLE; y += 1) {
     const boardYIndex = y + HIDDEN_ROWS;
     for (let x = 0; x < GRID_W; x += 1) {
       const cell = state.board[boardYIndex][x];
       if (cell) {
+        if (clearRows && clearRows.has(boardYIndex)) {
+          const dist = Math.abs((x + 0.5) - clearCenter);
+          if (clearProgress >= (dist / clearMaxDist)) {
+            continue;
+          }
+        }
         const textureTransform = state.boardTextures?.[boardYIndex]?.[x] ?? null;
+        const flashKey = `${x},${boardYIndex}`;
+        const flashColor = palette[cell];
         drawBlockSized(
           ctx,
           x * blockSize,
           y * blockSize + extraPx,
           blockSize,
-          palette[cell],
+          flashColor,
           node,
           textureTransform,
         );
       }
+    }
+  }
+  if (flashActive && lockFlash?.cells?.size) {
+    for (const key of lockFlash.cells) {
+      const [sx, sy] = key.split(",").map(Number);
+      if (!Number.isFinite(sx) || !Number.isFinite(sy)) continue;
+      if (sy < HIDDEN_ROWS || sy >= HIDDEN_ROWS + GRID_H_VISIBLE) continue;
+      const drawX = sx * blockSize;
+      const drawY = (sy - HIDDEN_ROWS) * blockSize + extraPx;
+      const diag = sx + sy;
+      const distance = Math.abs(diag - beamCenter);
+      if (distance > beamWidth) continue;
+      const t = 1 - (distance / beamWidth);
+      const alpha = Math.min(1, t * t);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(drawX, drawY, blockSize, blockSize);
+      ctx.clip();
+      const grad = ctx.createLinearGradient(drawX, drawY, drawX + blockSize, drawY + blockSize);
+      grad.addColorStop(0, `rgba(255,255,255,${0.05 * alpha})`);
+      grad.addColorStop(0.5, `rgba(255,255,255,${0.9 * alpha})`);
+      grad.addColorStop(1, `rgba(255,255,255,${0.05 * alpha})`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(drawX, drawY, blockSize, blockSize);
+      ctx.restore();
     }
   }
   return canvas;
@@ -1363,13 +1611,14 @@ function captureMatrixImage(node) {
     canvas.height = boardH;
   }
   const palette = getColorPalette(node);
+  const animConfig = getConfig(node);
   const gridEnabled = getGridEnabled(node);
   const gridColor = getGridColor(node);
   const bgSource = getBackgroundSource(node);
   const ghostEnabled = isGhostEnabled(node);
-  const showPreviews = state.started && state.running;
-  const showBoardContents = showPreviews || state.gameOver;
   const hideBoard = !state.gameOver && state.started && !state.running && !state.showBoardWhilePaused;
+  const showPreviews = state.started && state.running && !hideBoard;
+  const showBoardContents = (showPreviews || state.gameOver) && !hideBoard;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawBoardBackground(ctx, bgSource, 0, 0, boardW, boardH, palette.X);
   if (gridEnabled && gridColor) {
@@ -1388,10 +1637,13 @@ function captureMatrixImage(node) {
       ctx.drawImage(cache, 0, 0);
     }
   }
-  if (!state.gameOver && ghostEnabled && showPreviews) {
+  if (showBoardContents && !state.clearing && animConfig.anim_hard_drop_trail !== false) {
+    drawHardDropTrail(ctx, state, 0, extraPx, blockSize, palette);
+  }
+  if (!state.gameOver && ghostEnabled && showPreviews && !state.clearing) {
     drawGhostPiece(ctx, state, 0, extraPx, blockSize, palette[state.piece.shape], COLORS.Text);
   }
-  if (showBoardContents) {
+  if (showBoardContents && !state.clearing) {
     const pieceTransforms = ensurePieceTextureTransforms(state.piece);
     pieceCells(state.piece).forEach(([x, y], index) => {
       if (y >= HIDDEN_ROWS - 1 && y < GRID_H_TOTAL) {
@@ -1406,6 +1658,56 @@ function captureMatrixImage(node) {
         );
       }
     });
+  }
+  if (showBoardContents && state.lineClear?.rows?.length && animConfig.anim_line_clear !== false) {
+    const flashMs = state.lineClear.flashMs ?? 0;
+    const elapsed = state.lineClear.elapsed ?? 0;
+    const wipeMs = state.lineClear.wipeMs ?? 0;
+    const wipeProgress = wipeMs > 0 ? Math.min(1, Math.max(0, (elapsed - flashMs) / wipeMs)) : 0;
+    const clearCenter = GRID_W / 2;
+    const clearMaxDist = clearCenter - 0.5;
+    if (wipeProgress > 0) {
+      const ghostAlpha = 0.5 * (1 - wipeProgress);
+      if (ghostAlpha > 0.01) {
+        ctx.save();
+        state.lineClear.rows.forEach((row) => {
+          if (row < HIDDEN_ROWS) return;
+          const y = (row - HIDDEN_ROWS) * blockSize + extraPx;
+          for (let x = 0; x < GRID_W; x += 1) {
+            const cell = state.board[row]?.[x];
+            if (!cell) continue;
+            const dist = Math.abs((x + 0.5) - clearCenter);
+            if (wipeProgress >= (dist / clearMaxDist)) {
+              const color = palette[cell];
+              ctx.fillStyle = colorWithAlpha(color, ghostAlpha);
+              ctx.fillRect(x * blockSize, y, blockSize, blockSize);
+            }
+          }
+        });
+        ctx.restore();
+      }
+    }
+    if (elapsed < flashMs) {
+      const intensity = 0.35 * Math.max(0, 1 - (elapsed / flashMs));
+      ctx.save();
+      ctx.fillStyle = `rgba(255,255,255,${intensity})`;
+      state.lineClear.rows.forEach((row) => {
+        if (row < HIDDEN_ROWS) return;
+        const y = (row - HIDDEN_ROWS) * blockSize + extraPx;
+        ctx.fillRect(0, y, boardW, blockSize);
+      });
+      ctx.restore();
+    }
+    drawTetrisGlow(ctx, boardX, boardY + extraPx, blockSize, state.lineClear.rows, elapsed, state.lineClear.duration);
+  }
+  if (animConfig.anim_score_toasts !== false) {
+    drawActionToast(
+      ctx,
+      state,
+      { boardX: 0, boardY: 0, boardW, boardH, blockSize },
+      getThemeColors(node),
+      palette,
+    );
   }
   ctx.restore();
   return canvas.toDataURL("image/png");
@@ -1889,6 +2191,106 @@ function drawGhostPiece(ctx, state, boardX, boardY, blockSize, color, outlineCol
   ctx.globalAlpha = 1;
 }
 
+function drawTetrisGlow(ctx, boardX, boardY, blockSize, rows, elapsed, duration) {
+  if (!rows || rows.length !== 4) return;
+  if (!Number.isFinite(elapsed) || !Number.isFinite(duration) || duration <= 0) return;
+  const progress = Math.min(1, Math.max(0, elapsed / duration));
+  const baseAlpha = 0.95 * (1 - progress);
+  if (baseAlpha <= 0.01) return;
+  const minRow = Math.min(...rows);
+  const maxRow = Math.max(...rows);
+  if (!Number.isFinite(minRow) || !Number.isFinite(maxRow)) return;
+  ctx.save();
+  if (maxRow >= HIDDEN_ROWS) {
+    const flicker = 0.7 + 0.3 * Math.sin(elapsed / 32);
+    const alpha = Math.max(0, baseAlpha * flicker);
+    const jitter = Math.sin(elapsed / 18) * 0.6;
+    const y = boardY + (Math.max(minRow, HIDDEN_ROWS) - HIDDEN_ROWS) * blockSize;
+    const h = (maxRow - Math.max(minRow, HIDDEN_ROWS) + 1) * blockSize;
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = "rgba(255, 210, 72, 1)";
+    ctx.lineWidth = 6;
+    ctx.shadowBlur = 26 + Math.abs(jitter) * 4;
+    ctx.shadowColor = "rgba(255, 210, 72, 0.98)";
+    ctx.strokeRect(boardX + 1 + jitter, y + 1, GRID_W * blockSize - 2, h - 2);
+    ctx.globalAlpha = alpha * 0.6;
+    ctx.strokeStyle = "rgba(255, 235, 150, 1)";
+    ctx.lineWidth = 3;
+    ctx.shadowBlur = 14;
+    ctx.shadowColor = "rgba(255, 235, 150, 0.9)";
+    ctx.strokeRect(boardX + 4 - jitter, y + 4, GRID_W * blockSize - 8, h - 8);
+  }
+  ctx.restore();
+}
+
+function drawHardDropTrail(ctx, state, boardX, boardY, blockSize, palette) {
+  const trail = state.hardDropTrail;
+  if (!trail) return;
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const progress = trail.duration > 0 ? (now - trail.start) / trail.duration : 1;
+  if (progress >= 1) return;
+  const alpha = Math.max(0, 0.28 * (1 - progress));
+  if (alpha <= 0.01) return;
+  const baseColor = palette[trail.shape] || palette.T;
+  ctx.save();
+  ctx.globalAlpha = 1;
+  const span = Math.max(1, trail.endY - trail.startY);
+  for (let y = trail.startY; y <= trail.endY; y += 1) {
+    const piece = { shape: trail.shape, rot: trail.rot, x: trail.x, y };
+    const cells = pieceCells(piece);
+    const rowFade = Math.max(0, (y - trail.startY) / span);
+    for (const [cx, cy] of cells) {
+      if (cy >= HIDDEN_ROWS - 1 && cy < GRID_H_TOTAL) {
+        ctx.fillStyle = colorWithAlpha(baseColor, alpha * rowFade);
+        ctx.fillRect(
+          boardX + cx * blockSize,
+          boardY + (cy - HIDDEN_ROWS) * blockSize,
+          blockSize - 1,
+          blockSize - 1,
+        );
+      }
+    }
+  }
+  ctx.restore();
+}
+
+function drawActionToast(ctx, state, layout, theme, palette) {
+  const toast = state.actionToast;
+  if (!toast) return;
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const duration = toast.duration ?? 1200;
+  const elapsed = Math.min(duration, Math.max(0, now - toast.start));
+  if (now >= toast.until) return;
+  const progress = duration > 0 ? (elapsed / duration) : 1;
+  const alpha = Math.max(0, 1 - progress);
+  const { boardX, boardY, boardW, boardH, blockSize } = layout;
+  const baseSize = Math.max(12, Math.round(blockSize * 0.55));
+  const fontSize = Math.round(baseSize * (toast.scale || 1));
+  ctx.save();
+  ctx.font = `700 ${fontSize}px sans-serif`;
+  const text = toast.text;
+  const textWidth = ctx.measureText(text).width;
+  const pad = 6;
+  const anchorX = toast.anchorX ?? 4.5;
+  const anchorY = toast.anchorY ?? HIDDEN_ROWS + 2;
+  let x = boardX + anchorX * blockSize - textWidth / 2;
+  let y = boardY + (anchorY - HIDDEN_ROWS) * blockSize - (progress * blockSize * 0.6);
+  x = Math.max(boardX + pad, Math.min(boardX + boardW - textWidth - pad, x));
+  y = Math.max(boardY + pad, Math.min(boardY + boardH - fontSize - pad, y));
+  const colorKey = toast.colorKey || state.lastLockedPiece?.shape || "T";
+  const baseColor = palette?.[colorKey] || theme?.text || "rgba(255,255,255,0.95)";
+  const outlineColor = adjustColorByFactor(baseColor, -0.5);
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.lineWidth = Math.max(2, Math.round(fontSize * 0.15));
+  ctx.strokeStyle = outlineColor;
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = baseColor;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
 function getInputDataByName(node, name) {
   const idx = node?.inputs?.findIndex((inp) => inp?.name === name);
   if (idx == null || idx < 0) return null;
@@ -2239,11 +2641,10 @@ function drawNode(node, ctx) {
   const theme = getThemeColors(node);
   const palette = getColorPalette(node);
   const ghostEnabled = isGhostEnabled(node);
-  const showPreviews = state.started && state.running;
-  const showBoardContents = showPreviews || state.gameOver;
   const showControls = getShowControls(node);
   const gridEnabled = getGridEnabled(node);
   const gridColor = getGridColor(node);
+  const animConfig = getConfig(node);
 
   const bgSource = getBackgroundSource(node);
   drawBoardBackground(ctx, bgSource, boardX, boardY, boardW, boardH, palette.X);
@@ -2257,6 +2658,8 @@ function drawNode(node, ctx) {
   clearBorderGlow(ctx);
 
   const hideBoard = !state.gameOver && state.started && !state.running && !state.showBoardWhilePaused;
+  const showPreviews = state.started && state.running && !hideBoard;
+  const showBoardContents = (showPreviews || state.gameOver) && !hideBoard;
   if (!hideBoard) {
     ctx.save();
     ctx.beginPath();
@@ -2269,14 +2672,17 @@ function drawNode(node, ctx) {
       }
     }
 
-    if (!state.gameOver && ghostEnabled && showPreviews) {
-      drawGhostPiece(ctx, state, boardX, boardY + extraPx, blockSize, palette[state.piece.shape], COLORS.Text);
-    }
+  if (showBoardContents && !state.clearing && animConfig.anim_hard_drop_trail !== false) {
+    drawHardDropTrail(ctx, state, boardX, boardY + extraPx, blockSize, palette);
+  }
+  if (!state.gameOver && ghostEnabled && showPreviews && !state.clearing) {
+    drawGhostPiece(ctx, state, boardX, boardY + extraPx, blockSize, palette[state.piece.shape], COLORS.Text);
+  }
 
-    if (showBoardContents) {
-      const pieceTransforms = ensurePieceTextureTransforms(state.piece);
-      pieceCells(state.piece).forEach(([x, y], index) => {
-        if (y >= HIDDEN_ROWS - 1 && y < GRID_H_TOTAL) {
+  if (showBoardContents && !state.clearing) {
+    const pieceTransforms = ensurePieceTextureTransforms(state.piece);
+    pieceCells(state.piece).forEach(([x, y], index) => {
+      if (y >= HIDDEN_ROWS - 1 && y < GRID_H_TOTAL) {
           drawBlockSized(
             ctx,
             boardX + x * blockSize,
@@ -2286,10 +2692,60 @@ function drawNode(node, ctx) {
             node,
             pieceTransforms[index] ?? null,
           );
-        }
-      });
+      }
+    });
+  }
+  if (showBoardContents && state.lineClear?.rows?.length && animConfig.anim_line_clear !== false) {
+    const flashMs = state.lineClear.flashMs ?? 0;
+    const elapsed = state.lineClear.elapsed ?? 0;
+    const wipeMs = state.lineClear.wipeMs ?? 0;
+    const wipeProgress = wipeMs > 0 ? Math.min(1, Math.max(0, (elapsed - flashMs) / wipeMs)) : 0;
+    const clearCenter = GRID_W / 2;
+    const clearMaxDist = clearCenter - 0.5;
+    if (wipeProgress > 0) {
+      const ghostAlpha = 0.5 * (1 - wipeProgress);
+      if (ghostAlpha > 0.01) {
+        ctx.save();
+        state.lineClear.rows.forEach((row) => {
+          if (row < HIDDEN_ROWS) return;
+          const y = boardY + (row - HIDDEN_ROWS) * blockSize + extraPx;
+          for (let x = 0; x < GRID_W; x += 1) {
+            const cell = state.board[row]?.[x];
+            if (!cell) continue;
+            const dist = Math.abs((x + 0.5) - clearCenter);
+            if (wipeProgress >= (dist / clearMaxDist)) {
+              const color = palette[cell];
+              ctx.fillStyle = colorWithAlpha(color, ghostAlpha);
+              ctx.fillRect(boardX + x * blockSize, y, blockSize, blockSize);
+            }
+          }
+        });
+        ctx.restore();
+      }
     }
+    if (elapsed < flashMs) {
+      const intensity = 0.35 * Math.max(0, 1 - (elapsed / flashMs));
+      ctx.save();
+      ctx.fillStyle = `rgba(255,255,255,${intensity})`;
+      state.lineClear.rows.forEach((row) => {
+        if (row < HIDDEN_ROWS) return;
+        const y = boardY + (row - HIDDEN_ROWS) * blockSize + extraPx;
+        ctx.fillRect(boardX, y, boardW, blockSize);
+      });
+      ctx.restore();
+    }
+  }
     ctx.restore();
+  }
+
+  if (animConfig.anim_score_toasts !== false) {
+    drawActionToast(
+      ctx,
+      state,
+      { boardX, boardY, boardW, boardH, blockSize },
+      theme,
+      palette,
+    );
   }
 
   const previewBox = Math.max(4, Math.floor(PREVIEW_GRID * blockSize * PREVIEW_SCALE));
@@ -2506,7 +2962,9 @@ function drawNode(node, ctx) {
 
   const previewContentH = Math.max(4, previewBox);
   const nextCellSize = Math.max(4, Math.floor((previewContentH - innerPad * 2) / PREVIEW_GRID));
-  if (showHold) {
+  const showHoldPanel = showHold && !hideBoard;
+  const showNextPanel = showNext && !hideBoard;
+  if (showHoldPanel) {
     drawPanelBox(ctx, node, leftBoxX, nextBoxY, leftBoxW, previewBox, theme.panel_bg, theme.panel_border);
     if (showPreviews) {
       const holdTransforms = getPreviewTextureTransforms(state, state.holdShape, "hold");
@@ -2524,7 +2982,7 @@ function drawNode(node, ctx) {
     ctx.font = `bold ${titleFontSize}px sans-serif`;
     ctx.fillText("Hold", leftBoxX + titleInset, holdNextTitleY);
   }
-  if (showNext) {
+  if (showNextPanel) {
     drawPanelBox(ctx, node, rightBoxX, nextBoxY, rightBoxW, previewBox, theme.panel_bg, theme.panel_border);
     if (showPreviews) {
       const nextTransforms = getPreviewTextureTransforms(state, state.nextShape, "next");
@@ -2543,7 +3001,7 @@ function drawNode(node, ctx) {
     ctx.fillText("Next", rightBoxX + titleInset, holdNextTitleY);
   }
 
-  const queueCountTarget = showNext ? getQueueSize(node) : 0;
+  const queueCountTarget = showNextPanel ? getQueueSize(node) : 0;
   const showQueue = queueCountTarget > 0;
   const queueBoxY = nextBoxY + previewBox + PADDING * 1.2;
   const queueBoxW = rightBoxW;
@@ -3602,6 +4060,7 @@ function renderSettingsModal(node, body, activeTab = "settings") {
     { id: "block_style", label: "Block Style" },
     { id: "colors", label: "Colors" },
     { id: "theme", label: "UI Themes" },
+    { id: "animation", label: "Animation" },
   ];
   const tabRow = document.createElement("div");
   tabRow.style.display = "flex";
@@ -3653,6 +4112,8 @@ function renderSettingsModal(node, body, activeTab = "settings") {
   body.append(tabRow, panel);
   if (activeTab === "controls") {
     renderControlsModal(node, panel);
+  } else if (activeTab === "animation") {
+    renderAnimationModal(node, panel);
   } else if (activeTab === "block_style") {
     renderBlockStyleModal(node, panel);
   } else if (activeTab === "colors") {
@@ -5592,6 +6053,11 @@ function renderGameplayModal(node, body) {
         next[key] = input.checked;
         return next;
       });
+      if (key === "anim_lock_flash" && input.checked === false) {
+        if (node.__tetrisLive?.state) {
+          node.__tetrisLive.state.lockFlash = null;
+        }
+      }
       updateBackendState(node);
       node.setDirtyCanvas(true, true);
     });
@@ -5681,6 +6147,34 @@ function renderGameplayModal(node, body) {
 
   numberRow("Start Level", "start_level", 1, 15);
   numberRow("Queue Size", "queue_size", 0, 6);
+}
+
+function renderAnimationModal(node, body) {
+  body.innerHTML = "";
+  const config = getConfig(node);
+  const checkbox = (labelText, key) => {
+    const row = document.createElement("label");
+    row.style.display = "flex";
+    row.style.gap = "8px";
+    row.style.alignItems = "center";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = config[key] !== false;
+    input.addEventListener("change", () => {
+      updateConfig(node, (next) => {
+        next[key] = input.checked;
+        return next;
+      });
+      updateBackendState(node);
+      node.setDirtyCanvas(true, true);
+    });
+    row.append(input, document.createTextNode(labelText));
+    body.appendChild(row);
+  };
+  checkbox("Hard Drop Trail", "anim_hard_drop_trail");
+  checkbox("Lock Flash", "anim_lock_flash");
+  checkbox("Line Clear", "anim_line_clear");
+  checkbox("Score Toasts", "anim_score_toasts");
 }
 
 function openColorPicker(node, value, allowAlpha, defaultValue, onApply) {
@@ -6387,6 +6881,61 @@ function ensureTimer(node) {
       return;
     }
     if (!live.state.running || live.state.gameOver) return;
+    if (live.state.lockFlash) {
+      if (getConfig(node).anim_lock_flash === false) {
+        live.state.lockFlash = null;
+        live.state.boardDirty = true;
+      } else {
+      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      const start = live.state.lockFlash.start ?? now;
+      if (live.state.lockFlash.start == null) {
+        live.state.lockFlash.start = start;
+      }
+      live.state.lockFlash.elapsed = Math.max(0, now - start);
+      if (now >= live.state.lockFlash.until || live.state.lockFlash.elapsed >= live.state.lockFlash.duration) {
+        live.state.lockFlash = null;
+      }
+      live.state.boardDirty = true;
+      }
+    }
+    if (live.state.hardDropTrail) {
+      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      if (now - live.state.hardDropTrail.start >= live.state.hardDropTrail.duration) {
+        live.state.hardDropTrail = null;
+      } else {
+        live.state.boardDirty = true;
+      }
+    }
+    if (live.state.actionToast) {
+      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      if (now >= live.state.actionToast.until) {
+        live.state.actionToast = null;
+      } else {
+        live.state.boardDirty = true;
+      }
+    }
+    if (live.state.clearing) {
+      const { lineClear } = live.state;
+      if (lineClear) {
+        lineClear.elapsed += 50;
+        live.state.boardDirty = true;
+        if (lineClear.elapsed >= lineClear.duration) {
+          const pending = live.state.pendingClear;
+          if (pending) {
+            applyPendingClear(live.state, pending);
+          }
+          live.state.pendingClear = null;
+          live.state.clearing = false;
+          live.state.lineClear = null;
+          live.state.boardDirty = true;
+        } else {
+          live.state.boardDirty = true;
+        }
+      }
+      updateBackendState(node);
+      node.setDirtyCanvas(true, true);
+      return;
+    }
     const lockMode = getLockMode(node);
     updateAutoRepeat(live.state, node, 50);
     live.state.elapsed += 50;
@@ -6592,6 +7141,7 @@ function handleKey(event) {
       const key = event.key ? event.key.toLowerCase() : "";
       const tabMap = {
         s: "settings",
+        a: "animation",
         c: "controls",
         b: "block_style",
         o: "colors",
@@ -6653,6 +7203,11 @@ function handleKey(event) {
     matches(bindings.pause) ||
     matches(bindings.reset);
   if (!canAct) return;
+  if (state.clearing && !(matches(bindings.pause) || matches(bindings.reset))) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   let handled = true;
   if (matches(bindings.moveLeft)) {
     state.moveHeldLeft = true;
@@ -7085,6 +7640,10 @@ function getOptionsForState(node) {
     queue_size: config.queue_size,
     grid_enabled: !!config.grid_enabled,
     grid_color: config.grid_color,
+    anim_hard_drop_trail: config.anim_hard_drop_trail !== false,
+    anim_lock_flash: config.anim_lock_flash !== false,
+    anim_line_clear: config.anim_line_clear !== false,
+    anim_score_toasts: config.anim_score_toasts !== false,
     block_style: cloneDeep(config.block_style || DEFAULT_CONFIG.block_style),
     ...config.colors,
   };

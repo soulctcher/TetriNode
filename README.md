@@ -17,10 +17,11 @@ A ComfyUI custom node pack that embeds a playable Tetris game inside a node UI, 
 - Level progression with official fall speeds
 - Pause/Play, Reset, Load State, and Save State controls
 - Seeded piece generation with a standard seed widget available
-- In-node toolbar with a single Settings screen (tabs: Settings, Controls, Block Style, Colors, UI Themes)
+- In-node toolbar with a single Settings screen (tabs: Settings, Controls, Block Style, Colors, UI Themes, Animation)
 - Block Style presets with extensive style sliders and per-slider reset
 - Optional block textures (Pixel Art, Brushed Metal, Wooden Block, Concrete, Toxic Slime)
 - Randomized texture sampling per block for supported textures
+- Animation effects (lock flash sweep, line clear, hard drop trail, score toasts)
 
 ## Nodes
 
@@ -70,6 +71,10 @@ All configuration now lives inside TetriNode (no external options node). The Set
 - **UI Themes**: Glass/Flat/Neon/Minimal presets with editable colors and a “Reset Theme Colors” button.
 
 ![UI Themes tab](docs/images/ui_themes.png)
+
+- **Animation**: Toggles for Hard Drop Trail, Lock Flash, Line Clear, and Score Toasts. Disabling Line Clear or Lock Flash removes their timing delays.
+
+![Animation tab](docs/images/animation.png)
 
 ## Controls (Default)
 
