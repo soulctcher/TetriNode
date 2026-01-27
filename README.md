@@ -17,7 +17,8 @@ A ComfyUI custom node pack that embeds a playable Tetris game inside a node UI, 
 - Level progression with official fall speeds
 - Pause/Play, Reset, Load State, and Save State controls
 - Seeded piece generation with a standard seed widget available
-- In-node toolbar with a single Settings screen (tabs: Settings, Controls, Block Style, Colors, UI Themes, Animation)
+- In-node toolbar with a single Settings screen (tabs: Settings, Controls, Block Style, Colors, UI Themes, Animation, Music)
+- Built-in music player with 6 loopable tracks, custom MP3 support, volume/mute, and level-based speed increase
 - Block Style presets with extensive style sliders and per-slider reset
 - Optional block textures (Pixel Art, Brushed Metal, Wooden Block, Concrete, Toxic Slime)
 - Randomized texture sampling per block for supported textures
@@ -39,7 +40,7 @@ Main gameplay node.
 - `matrix` (IMAGE): current board
 
 **UI controls**
-- **Top toolbar**: Load State, Save State, Reset, Pause/Play, and a Settings screen.
+- **Top toolbar**: Load State, Save State, Reset, Pause/Play, Music volume/mute, and a Settings screen.
 - **Load State**: Opens a screen to paste a serialized state.
 
 ![Load State screen](docs/images/load_state.png)
@@ -75,6 +76,10 @@ All configuration now lives inside TetriNode (no external options node). The Set
 - **Animation**: Toggles for Hard Drop Trail, Lock Flash, Line Clear, and Score Toasts. Disabling Line Clear or Lock Flash removes their timing delays.
 
 ![Animation tab](docs/images/animation.png)
+
+- **Music**: Built-in Game Boy and NES tracks, custom MP3 selector, volume/mute, preview button, and a toggle for progressive speed increase.
+
+![Music tab](docs/images/music.png)
 
 ## Controls (Default)
 

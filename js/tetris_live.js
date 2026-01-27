@@ -28,7 +28,7 @@ const CONTROL_MIN = 110;
 const DAS_MS = 300;
 const ARR_MS = 56;
 const IMAGE_CACHE = new Map();
-const TETRINODE_VERSION = "2.1.0";
+const TETRINODE_VERSION = "2.2.0";
 const LOAD_ICON_VIEWBOX = 1536;
 const LOAD_ICON_PATH =
   "M316 1180H1220Q1280 1180 1280 1240Q1280 1300 1220 1300H316Q256 1300 256 1240Q256 1180 316 1180ZM708 360H828Q888 360 888 420V780H948Q988 780 988 820Q988 840 974 856L796 1034Q780 1050 768 1050Q756 1050 740 1034L562 856Q548 840 548 820Q548 780 588 780H648V420Q648 360 708 360Z";
@@ -189,6 +189,12 @@ const DEFAULT_CONFIG = {
   anim_lock_flash: true,
   anim_line_clear: true,
   anim_score_toasts: true,
+  music_track: "none",
+  music_custom_path: "",
+  music_volume: 100,
+  music_muted: false,
+  music_prev_volume: 100,
+  music_speed_progressive: true,
 };
 
 const CONTROL_ACTIONS = [
@@ -221,6 +227,15 @@ const ALLOWED_KEYS = new Set([
   "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
   "-", "=", "[", "]", "\\", ";", "'", ",", ".", "/", "`",
 ]);
+
+const MUSIC_TRACKS = [
+  { id: "gb_a", label: "Game Boy Track A", file: "gb_a.mp3" },
+  { id: "gb_b", label: "Game Boy Track B", file: "gb_b.mp3" },
+  { id: "gb_c", label: "Game Boy Track C", file: "gb_c.mp3" },
+  { id: "nes_a", label: "NES Track A", file: "nes_a.mp3" },
+  { id: "nes_b", label: "NES Track B", file: "nes_b.mp3" },
+  { id: "nes_c", label: "NES Track C", file: "nes_c.mp3" },
+];
 
 const SHAPES = {
   I: [
@@ -461,6 +476,7 @@ function createState(seed, startLevel = 1, levelProgression = "fixed") {
     b2bActive: false,
     running: false,
     started: false,
+    hasStartedGame: false,
     gameOver: false,
     baseDropMs,
     dropMs: baseDropMs,
@@ -3556,6 +3572,39 @@ function drawSettingsIcon(ctx, x, y, size, color) {
   return true;
 }
 
+function drawSpeakerIcon(ctx, x, y, size, color, muted) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = Math.max(1, size * 0.12);
+  const bodyW = size * 0.35;
+  const bodyH = size * 0.5;
+  const bodyX = x + size * 0.1;
+  const bodyY = y + (size - bodyH) / 2;
+  ctx.beginPath();
+  ctx.rect(bodyX, bodyY, bodyW, bodyH);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(bodyX + bodyW, bodyY);
+  ctx.lineTo(x + size * 0.9, y + size * 0.15);
+  ctx.lineTo(x + size * 0.9, y + size * 0.85);
+  ctx.lineTo(bodyX + bodyW, bodyY + bodyH);
+  ctx.closePath();
+  ctx.fill();
+  if (muted) {
+    ctx.beginPath();
+    ctx.moveTo(x + size * 0.15, y + size * 0.15);
+    ctx.lineTo(x + size * 0.85, y + size * 0.85);
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.arc(x + size * 0.78, y + size * 0.5, size * 0.18, -0.6, 0.6);
+    ctx.stroke();
+  }
+  ctx.restore();
+  return true;
+}
+
 function applyBorderGlow(ctx, node) {
   const config = getConfig(node);
   if (config.theme !== "neon") return;
@@ -3618,9 +3667,353 @@ function ensureUiState(node) {
       blockStylePreset: "Flat (default)",
       blockStylePresetBaseFull: "Flat (default)",
       blockStylePresetBaseLabel: "Flat",
+      music: null,
     };
   }
   return node.__tetrisUi;
+}
+
+function getExtensionBasePath() {
+  if (window.__tetrinodeBasePath) return window.__tetrinodeBasePath;
+  const scripts = Array.from(document.querySelectorAll("script[src]"));
+  const script = scripts.find((item) => item.src && item.src.includes("/js/tetris_live.js"));
+  if (script?.src) {
+    const base = script.src.replace(/\/js\/tetris_live\.js.*$/, "");
+    window.__tetrinodeBasePath = base;
+    return base;
+  }
+  return "";
+}
+
+function ensureMusicState(node) {
+  const ui = ensureUiState(node);
+  if (!ui.music) {
+    const audio = new Audio();
+    audio.loop = true;
+    audio.addEventListener("error", () => {
+      const err = audio.error;
+      ui.music.lastError = err ? `${err.code}` : "unknown";
+    });
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    ui.music = {
+      audio,
+      customUrl: null,
+      lastTrack: null,
+      lastVolume: null,
+      lastMuted: null,
+      lastCustomPath: null,
+      previewing: false,
+      unlocked: false,
+      lastError: null,
+      lastPlayError: null,
+      lastUrlStatus: null,
+      lastCheckedUrl: null,
+      useWebAudio: !!AudioCtx,
+      ctx: null,
+      gain: null,
+      source: null,
+      buffer: null,
+      loading: null,
+    };
+  }
+  return ui.music;
+}
+
+function clampMusicVolume(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 100;
+  return Math.max(0, Math.min(100, Math.round(num)));
+}
+
+function setMusicVolume(node, value) {
+  updateConfig(node, (next) => {
+    const volume = clampMusicVolume(value);
+    next.music_volume = volume;
+    if (volume > 0) {
+      next.music_muted = false;
+      next.music_prev_volume = volume;
+    } else {
+      next.music_muted = true;
+    }
+    return next;
+  });
+}
+
+function toggleMusicMute(node) {
+  const config = getConfig(node);
+  const volume = clampMusicVolume(config.music_volume ?? 100);
+  const isMuted = !!config.music_muted || volume <= 0;
+  updateConfig(node, (next) => {
+    if (isMuted) {
+      const restore = clampMusicVolume(next.music_prev_volume ?? 100) || 100;
+      next.music_muted = false;
+      next.music_volume = restore;
+      next.music_prev_volume = restore;
+    } else {
+      next.music_prev_volume = volume > 0 ? volume : (next.music_prev_volume ?? 100);
+      next.music_muted = true;
+      next.music_volume = 0;
+    }
+    return next;
+  });
+}
+
+function setMusicTrack(node, trackId) {
+  updateConfig(node, (next) => {
+    next.music_track = trackId;
+    return next;
+  });
+}
+
+function setCustomMusicFile(node, file) {
+  if (!file) return;
+  const music = ensureMusicState(node);
+  if (music.customUrl) {
+    URL.revokeObjectURL(music.customUrl);
+  }
+  music.customUrl = URL.createObjectURL(file);
+  updateConfig(node, (next) => {
+    next.music_custom_path = file.name || "";
+    next.music_track = "custom";
+    return next;
+  });
+}
+
+function unlockMusic(node) {
+  const music = ensureMusicState(node);
+  if (music.unlocked) return;
+  if (music.useWebAudio) {
+    try {
+      if (!music.ctx) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        music.ctx = AudioCtx ? new AudioCtx() : null;
+      }
+      if (music.ctx) {
+        music.ctx.resume().then(() => {
+          music.unlocked = true;
+          syncMusicFromConfig(node, true);
+        }).catch(() => {
+          music.lastPlayError = "unlock_failed";
+        });
+        return;
+      }
+    } catch {
+      // fallback to HTMLAudio
+    }
+  }
+  const audio = music.audio;
+  const prevMuted = audio.muted;
+  const prevVolume = audio.volume;
+  audio.muted = true;
+  audio.volume = 0;
+  audio.play()
+    .then(() => {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = prevMuted;
+      audio.volume = prevVolume;
+      music.unlocked = true;
+      syncMusicFromConfig(node, true);
+    })
+    .catch(() => {
+      audio.muted = prevMuted;
+      audio.volume = prevVolume;
+      music.lastPlayError = "unlock_failed";
+    });
+}
+
+function toggleMusicPreview(node) {
+  unlockMusic(node);
+  const music = ensureMusicState(node);
+  music.previewing = !music.previewing;
+  syncMusicFromConfig(node, true);
+}
+
+function resolveMusicTrackUrl(node, trackId) {
+  if (!trackId || trackId === "none") return null;
+  if (trackId === "custom") {
+    const music = ensureMusicState(node);
+    return music.customUrl;
+  }
+  const entry = MUSIC_TRACKS.find((track) => track.id === trackId);
+  if (!entry) return null;
+  let base = getExtensionBasePath() || "/extensions/TetriNode";
+  if (base && !base.startsWith("http")) {
+    base = `${window.location.origin}${base.startsWith("/") ? "" : "/"}${base}`;
+  }
+  const url = `${base}/music/${entry.file}`;
+  return url;
+}
+
+function syncMusicFromConfig(node, force = false) {
+  const config = getConfig(node);
+  const music = ensureMusicState(node);
+  const state = node.__tetrisLive?.state;
+  const running = !!(state && state.running && state.started && !state.gameOver && state.hasStartedGame);
+  const ui = ensureUiState(node);
+  const modalOpen = !!ui?.modal?.el;
+  const paused = !!(state && state.started && !state.running);
+  const hasTime = (state?.timeMs ?? 0) > 0;
+  const level = Math.max(1, Number.isFinite(state?.level) ? state.level : 1);
+  const progressive = config.music_speed_progressive !== false;
+  const rateBase = Math.pow(1.01, Math.max(0, Math.min(level, 10) - 1));
+  const rateBonus = (level >= 13 ? 1.03 : 1) * (level >= 15 ? 1.03 : 1);
+  const rate = progressive ? rateBase * rateBonus : 1;
+  const volumeRaw = Number(config.music_volume ?? 100);
+  const volume = Math.max(0, Math.min(100, Number.isFinite(volumeRaw) ? volumeRaw : 100));
+  const muted = !!config.music_muted || volume <= 0;
+  const track = config.music_track || "none";
+  const customPath = config.music_custom_path || "";
+  const url = resolveMusicTrackUrl(node, track);
+  if (!running && music.previewing && !modalOpen) {
+    music.previewing = false;
+  }
+  const shouldPlay = ((running && !paused && hasTime) || music.previewing) && !muted && !!url;
+  const trackChanged = music.lastTrack !== track || music.lastCustomPath !== customPath;
+  if (url && music.lastCheckedUrl !== url) {
+    music.lastCheckedUrl = url;
+    music.lastUrlStatus = "checking";
+    fetch(url, { method: "HEAD" })
+      .then((res) => {
+        music.lastUrlStatus = res.ok ? `ok:${res.status}` : `err:${res.status}`;
+      })
+      .catch(() => {
+        music.lastUrlStatus = "fetch_failed";
+      });
+  }
+  const desiredVolume = muted ? 0 : volume / 100;
+  if (music.useWebAudio) {
+    if (!music.ctx) {
+      // create context lazily on unlock
+    } else if (!music.gain) {
+      music.gain = music.ctx.createGain();
+      music.gain.connect(music.ctx.destination);
+    }
+    if (music.gain) {
+      music.gain.gain.value = desiredVolume;
+      music.lastVolume = desiredVolume;
+    }
+    if (music.source && music.lastRate !== rate) {
+      try {
+        music.source.playbackRate.value = rate;
+      } catch {}
+      music.lastRate = rate;
+    }
+    if (!shouldPlay || !music.unlocked) {
+      if (music.source) {
+        try {
+          music.source.stop();
+        } catch {}
+        try {
+          music.source.disconnect();
+        } catch {}
+        music.source = null;
+      }
+      music.lastMuted = muted;
+      return;
+    }
+    if (trackChanged) {
+      music.loading = (async () => {
+        try {
+          if (!music.ctx) return;
+          const response = await fetch(url);
+          if (!response.ok) {
+            music.lastPlayError = `fetch:${response.status}`;
+            return;
+          }
+          const data = await response.arrayBuffer();
+          const buffer = await music.ctx.decodeAudioData(data.slice(0));
+          music.buffer = buffer;
+          if (music.source) {
+            try {
+              music.source.stop();
+            } catch {}
+            try {
+              music.source.disconnect();
+            } catch {}
+          }
+          const source = music.ctx.createBufferSource();
+          source.buffer = buffer;
+          source.loop = true;
+          source.loopStart = 0;
+          source.loopEnd = buffer.duration;
+          source.playbackRate.value = rate;
+          if (music.gain) {
+            source.connect(music.gain);
+          } else {
+            source.connect(music.ctx.destination);
+          }
+          source.start(0);
+          music.source = source;
+          music.lastTrack = track;
+          music.lastCustomPath = customPath;
+          music.lastRate = rate;
+        } catch (err) {
+          music.lastPlayError = err ? String(err.message || err) : "decode_failed";
+        }
+      })();
+    } else if (!music.source && music.buffer) {
+      try {
+        const source = music.ctx.createBufferSource();
+        source.buffer = music.buffer;
+        source.loop = true;
+        source.loopStart = 0;
+        source.loopEnd = music.buffer.duration;
+        source.playbackRate.value = rate;
+        if (music.gain) {
+          source.connect(music.gain);
+        } else {
+          source.connect(music.ctx.destination);
+        }
+        source.start(0);
+        music.source = source;
+        music.lastRate = rate;
+      } catch (err) {
+        music.lastPlayError = err ? String(err.message || err) : "play_failed";
+      }
+    }
+    music.lastMuted = muted;
+    return;
+  }
+  if (trackChanged) {
+    if (url) {
+      if (music.audio.src !== url) {
+        music.audio.src = url;
+      }
+      music.audio.loop = true;
+      music.audio.playbackRate = rate;
+      if (shouldPlay && music.unlocked) {
+        music.audio.play().catch((err) => {
+          music.lastPlayError = err ? String(err.message || err) : "play_failed";
+        });
+      }
+    } else {
+      music.audio.pause();
+      music.audio.removeAttribute("src");
+      music.audio.load();
+    }
+    music.lastTrack = track;
+    music.lastCustomPath = customPath;
+  }
+  if (force || music.lastVolume !== desiredVolume) {
+    music.audio.volume = desiredVolume;
+    music.lastVolume = desiredVolume;
+  }
+  if (force || music.lastRate !== rate) {
+    music.audio.playbackRate = rate;
+    music.lastRate = rate;
+  }
+  if (!shouldPlay || !music.unlocked) {
+    music.audio.pause();
+    music.lastMuted = muted;
+    return;
+  }
+  if (force || music.lastMuted !== muted || music.lastTrack !== track || music.previewing) {
+    music.audio.play().catch((err) => {
+      music.lastPlayError = err ? String(err.message || err) : "play_failed";
+    });
+    music.lastMuted = muted;
+  }
 }
 
 function buildToolbarButtons(node, toolbarY, barH) {
@@ -3637,17 +4030,25 @@ function buildToolbarButtons(node, toolbarY, barH) {
   ];
   const rightButtons = [
     { id: "settings", label: "S", tooltip: "Settings" },
+    { id: "music_volume", label: "", tooltip: "Volume", w: 90, h: 10 },
+    { id: "music_mute", label: "M", tooltip: "Mute" },
   ];
   const buttons = [];
   let x = leftStart;
   for (const btn of leftButtons) {
-    buttons.push({ ...btn, x, y: top, w: btnSize, h: btnSize });
-    x += btnSize + gap;
+    const w = btn.w ?? btnSize;
+    const h = btn.h ?? btnSize;
+    const y = top + (btnSize - h) / 2;
+    buttons.push({ ...btn, x, y, w, h });
+    x += w + gap;
   }
   let rightX = rightStart;
   for (const btn of rightButtons) {
-    rightX -= btnSize;
-    buttons.push({ ...btn, x: rightX, y: top, w: btnSize, h: btnSize });
+    const w = btn.w ?? btnSize;
+    const h = btn.h ?? btnSize;
+    rightX -= w;
+    const y = top + (btnSize - h) / 2;
+    buttons.push({ ...btn, x: rightX, y, w, h });
     rightX -= gap;
   }
   return { buttons, height: TOOLBAR_H, top };
@@ -3656,12 +4057,15 @@ function buildToolbarButtons(node, toolbarY, barH) {
 function drawToolbar(node, ctx, boardY) {
   const ui = ensureUiState(node);
   const config = getConfig(node);
+  syncMusicFromConfig(node);
   const theme = getThemeColors(node);
   const themeSettings = config.theme_settings || DEFAULT_CONFIG.theme_settings;
   const live = node.__tetrisLive;
   const state = live?.state;
   const isPlaying = !!(state && state.running && state.started && !state.gameOver);
   const pauseTooltip = isPlaying ? "Pause" : "Play";
+  const musicVolume = clampMusicVolume(config.music_volume ?? 100);
+  const musicMuted = !!config.music_muted || musicVolume <= 0;
   const desiredY = boardY - TOOLBAR_H - 10;
   const barY = Math.max(HEADER_H + 2, Math.round(desiredY));
   const barX = PADDING;
@@ -3698,6 +4102,39 @@ function drawToolbar(node, ctx, boardY) {
   for (const btn of buttons) {
     if (btn.id === "pause") {
       btn.tooltip = pauseTooltip;
+    }
+    if (btn.id === "music_mute") {
+      btn.tooltip = musicMuted ? "Unmute" : "Mute";
+    }
+    if (btn.id === "music_volume") {
+      const trackX = btn.x;
+      const trackY = btn.y + (btn.h / 2) - 2;
+      const trackW = btn.w;
+      const trackH = 4;
+      ctx.save();
+      ctx.fillStyle = theme.button_bg;
+      ctx.strokeStyle = theme.panel_border;
+      if ((config.theme === "glass" || config.theme === "neon") && typeof ctx.roundRect === "function") {
+        ctx.beginPath();
+        ctx.roundRect(trackX, trackY, trackW, trackH, 3);
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        ctx.fillRect(trackX, trackY, trackW, trackH);
+        if (config.theme !== "flat") {
+          ctx.strokeRect(trackX + 0.5, trackY + 0.5, trackW - 1, trackH - 1);
+        }
+      }
+      const fillW = Math.round((musicVolume / 100) * trackW);
+      if (fillW > 0) {
+        ctx.fillStyle = theme.accent;
+        ctx.fillRect(trackX, trackY, fillW, trackH);
+      }
+      const knobX = trackX + fillW - 3;
+      ctx.fillStyle = theme.text;
+      ctx.fillRect(knobX, trackY - 2, 6, trackH + 4);
+      ctx.restore();
+      continue;
     }
     const hovered = ui.hoverButton && ui.hoverButton.id === btn.id;
     const iconColor = theme.button || theme.text;
@@ -3810,6 +4247,13 @@ function drawToolbar(node, ctx, boardY) {
       if (!drawSettingsIcon(ctx, iconX, iconY, iconSize, iconColor)) {
         ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2 + 0.5);
       }
+    } else if (btn.id === "music_mute") {
+      const iconSize = Math.floor(btn.w * 0.7);
+      const iconX = btn.x + (btn.w - iconSize) / 2;
+      const iconY = btn.y + (btn.h - iconSize) / 2;
+      if (!drawSpeakerIcon(ctx, iconX, iconY, iconSize, iconColor, musicMuted)) {
+        ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2 + 0.5);
+      }
     } else {
       ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2 + 0.5);
     }
@@ -3845,6 +4289,7 @@ function hitToolbarButton(node, pos, boardY = null) {
 }
 
 function handleToolbarClick(node, pos) {
+  unlockMusic(node);
   const btn = hitToolbarButton(node, pos, node.__tetrisLastLayout?.boardY);
   if (!btn) return false;
   if (btn.id === "reset") {
@@ -3867,6 +4312,15 @@ function handleToolbarClick(node, pos) {
     openSettingsModal(node);
     return true;
   }
+  if (btn.id === "music_mute") {
+    toggleMusicMute(node);
+    return true;
+  }
+  if (btn.id === "music_volume") {
+    const rel = Math.max(0, Math.min(1, (pos[0] - btn.x) / Math.max(1, btn.w)));
+    setMusicVolume(node, Math.round(rel * 100));
+    return true;
+  }
   return false;
 }
 
@@ -3878,6 +4332,7 @@ function closeModal(node) {
   ui.modal = null;
   ui.captureAction = null;
   ui.confirmPrompt = null;
+  syncMusicFromConfig(node, true);
 }
 
 function pauseForModal(node) {
@@ -3886,6 +4341,7 @@ function pauseForModal(node) {
   live.state.running = false;
   live.state.showBoardWhilePaused = true;
   node.setDirtyCanvas(true, true);
+  syncMusicFromConfig(node, true);
 }
 
 function createModalBase(node, title, keepExisting = false) {
@@ -4061,6 +4517,7 @@ function renderSettingsModal(node, body, activeTab = "settings") {
     { id: "colors", label: "Colors" },
     { id: "theme", label: "UI Themes" },
     { id: "animation", label: "Animation" },
+    { id: "music", label: "Music" },
   ];
   const tabRow = document.createElement("div");
   tabRow.style.display = "flex";
@@ -4114,6 +4571,8 @@ function renderSettingsModal(node, body, activeTab = "settings") {
     renderControlsModal(node, panel);
   } else if (activeTab === "animation") {
     renderAnimationModal(node, panel);
+  } else if (activeTab === "music") {
+    renderMusicModal(node, panel);
   } else if (activeTab === "block_style") {
     renderBlockStyleModal(node, panel);
   } else if (activeTab === "colors") {
@@ -6177,6 +6636,150 @@ function renderAnimationModal(node, body) {
   checkbox("Score Toasts", "anim_score_toasts");
 }
 
+function renderMusicModal(node, body) {
+  body.innerHTML = "";
+  const config = getConfig(node);
+  const musicVolume = clampMusicVolume(config.music_volume ?? 100);
+  const musicMuted = !!config.music_muted || musicVolume <= 0;
+  const selectedTrack = config.music_track || "none";
+  const music = ensureMusicState(node);
+  const resolvedUrl = resolveMusicTrackUrl(node, selectedTrack);
+  const row = (labelText) => {
+    const wrap = document.createElement("div");
+    wrap.style.display = "grid";
+    wrap.style.gridTemplateColumns = "140px 1fr";
+    wrap.style.gap = "8px";
+    wrap.style.alignItems = "center";
+    const label = document.createElement("div");
+    label.textContent = labelText;
+    wrap.appendChild(label);
+    return { wrap, label };
+  };
+
+  const trackRow = row("Track:");
+  const select = document.createElement("select");
+  const options = [
+    { value: "none", label: "None" },
+    ...MUSIC_TRACKS.map((track) => ({ value: track.id, label: track.label })),
+    { value: "custom", label: "Custom" },
+  ];
+  options.forEach((opt) => {
+    const option = document.createElement("option");
+    option.value = opt.value;
+    option.textContent = opt.label;
+    select.appendChild(option);
+  });
+  select.value = selectedTrack;
+  select.addEventListener("change", () => {
+    unlockMusic(node);
+    setMusicTrack(node, select.value);
+    renderMusicModal(node, body);
+  });
+  trackRow.wrap.appendChild(select);
+  body.appendChild(trackRow.wrap);
+
+  const customRow = row("File:");
+  const customWrap = document.createElement("div");
+  customWrap.style.display = "flex";
+  customWrap.style.gap = "8px";
+  customWrap.style.alignItems = "center";
+  const pathInput = document.createElement("input");
+  pathInput.type = "text";
+  pathInput.value = config.music_custom_path || "";
+  pathInput.placeholder = "Select an .mp3 file...";
+  pathInput.readOnly = true;
+  pathInput.style.flex = "1";
+  const selectBtn = document.createElement("button");
+  selectBtn.textContent = "Select";
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = ".mp3";
+  fileInput.style.display = "none";
+  selectBtn.addEventListener("click", () => {
+    unlockMusic(node);
+    fileInput.click();
+  });
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    if (file) {
+      setCustomMusicFile(node, file);
+      renderMusicModal(node, body);
+    }
+  });
+  const customEnabled = selectedTrack === "custom";
+  pathInput.disabled = !customEnabled;
+  selectBtn.disabled = !customEnabled;
+  customWrap.append(pathInput, selectBtn, fileInput);
+  customRow.wrap.appendChild(customWrap);
+  body.appendChild(customRow.wrap);
+
+  const volumeRow = row("Volume:");
+  const volumeWrap = document.createElement("div");
+  volumeWrap.style.display = "flex";
+  volumeWrap.style.alignItems = "center";
+  volumeWrap.style.gap = "10px";
+  const muteBtn = document.createElement("button");
+  muteBtn.textContent = musicMuted ? "Muted" : "Mute";
+  muteBtn.addEventListener("click", () => {
+    unlockMusic(node);
+    toggleMusicMute(node);
+    renderMusicModal(node, body);
+  });
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.min = "0";
+  slider.max = "100";
+  slider.value = `${musicVolume}`;
+  slider.style.flex = "1";
+  slider.addEventListener("input", () => {
+    unlockMusic(node);
+    setMusicVolume(node, Number(slider.value));
+    syncMusicFromConfig(node, true);
+    const nextVolume = clampMusicVolume(slider.value);
+    muteBtn.textContent = nextVolume <= 0 ? "Muted" : "Mute";
+  });
+  volumeWrap.append(muteBtn, slider);
+  volumeRow.wrap.appendChild(volumeWrap);
+  body.appendChild(volumeRow.wrap);
+
+  const previewRow = row("Preview:");
+  const previewWrap = document.createElement("div");
+  previewWrap.style.display = "flex";
+  previewWrap.style.alignItems = "center";
+  previewWrap.style.gap = "10px";
+  const playBtn = document.createElement("button");
+  playBtn.textContent = music.previewing ? "Stop" : "Play";
+  playBtn.addEventListener("click", () => {
+    toggleMusicPreview(node);
+    renderMusicModal(node, body);
+  });
+  previewWrap.appendChild(playBtn);
+  previewRow.wrap.appendChild(previewWrap);
+  body.appendChild(previewRow.wrap);
+
+  const speedRow = row("Speed:");
+  const speedWrap = document.createElement("div");
+  speedWrap.style.display = "flex";
+  speedWrap.style.alignItems = "center";
+  speedWrap.style.gap = "8px";
+  const speedInput = document.createElement("input");
+  speedInput.type = "checkbox";
+  speedInput.checked = config.music_speed_progressive !== false;
+  speedInput.addEventListener("change", () => {
+    updateConfig(node, (next) => {
+      next.music_speed_progressive = speedInput.checked;
+      return next;
+    });
+    syncMusicFromConfig(node, true);
+    renderMusicModal(node, body);
+  });
+  const speedLabel = document.createElement("div");
+  speedLabel.textContent = "Increase with level";
+  speedWrap.append(speedInput, speedLabel);
+  speedRow.wrap.appendChild(speedWrap);
+  body.appendChild(speedRow.wrap);
+}
+
 function openColorPicker(node, value, allowAlpha, defaultValue, onApply) {
   const overlay = document.createElement("div");
   overlay.style.position = "fixed";
@@ -6842,6 +7445,7 @@ function syncStartLevel(state, node) {
 function resetNode(node) {
   const live = node.__tetrisLive;
   if (!live) return;
+  unlockMusic(node);
   const seed = getSeedValue(node, { allowRandomize: true });
   const startLevel = getStartLevel(node);
   const progression = getLevelProgression(node);
@@ -6851,6 +7455,7 @@ function resetNode(node) {
   node.__tetrisSizeInitialized = true;
   live.state.started = true;
   live.state.running = true;
+  live.state.hasStartedGame = true;
   live.state.showBoardWhilePaused = false;
   updateBackendState(node);
   node.setDirtyCanvas(true, true);
@@ -6860,14 +7465,17 @@ function togglePause(node) {
   const live = node.__tetrisLive;
   if (!live) return;
   if (!live.state.started && !live.state.gameOver) {
+    unlockMusic(node);
     live.state.started = true;
     live.state.running = true;
+    live.state.hasStartedGame = true;
   } else {
     live.state.running = !live.state.running;
   }
   live.state.showBoardWhilePaused = false;
   updateBackendState(node);
   node.setDirtyCanvas(true, true);
+  syncMusicFromConfig(node, true);
 }
 
 function ensureTimer(node) {
@@ -7142,6 +7750,7 @@ function handleKey(event) {
       const tabMap = {
         s: "settings",
         a: "animation",
+        m: "music",
         c: "controls",
         b: "block_style",
         o: "colors",
@@ -7245,6 +7854,7 @@ function handleKey(event) {
     event.stopPropagation();
     updateBackendState(node);
     node.setDirtyCanvas(true, true);
+    syncMusicFromConfig(node, false);
   }
 }
 
@@ -7624,6 +8234,9 @@ function updateConfig(node, updater) {
     node.__tetrisLive.state.boardDirty = true;
     node.__tetrisLive.boardCacheKey = null;
   }
+  if (node) {
+    syncMusicFromConfig(node);
+  }
   return next;
 }
 
@@ -7793,6 +8406,17 @@ app.registerExtension({
 
     const originalMouseDown = node.onMouseDown;
     node.onMouseDown = function (event, pos, _graphcanvas) {
+      const ui = ensureUiState(node);
+      const hit = hitToolbarButton(node, pos, node.__tetrisLastLayout?.boardY);
+      if (hit?.id === "music_volume") {
+        unlockMusic(node);
+        ui.dragVolume = true;
+        const rel = Math.max(0, Math.min(1, (pos[0] - hit.x) / Math.max(1, hit.w)));
+        setMusicVolume(node, Math.round(rel * 100));
+        syncMusicFromConfig(node, true);
+        node.setDirtyCanvas(true, true);
+        return true;
+      }
       if (handleToolbarClick(node, pos)) {
         node.setDirtyCanvas(true, true);
         return true;
@@ -7803,6 +8427,16 @@ app.registerExtension({
     const originalMouseMove = node.onMouseMove;
     node.onMouseMove = function (event, pos, _graphcanvas) {
       const ui = ensureUiState(node);
+      if (ui.dragVolume) {
+        const hit = hitToolbarButton(node, pos, node.__tetrisLastLayout?.boardY);
+        if (hit?.id === "music_volume") {
+          const rel = Math.max(0, Math.min(1, (pos[0] - hit.x) / Math.max(1, hit.w)));
+          setMusicVolume(node, Math.round(rel * 100));
+          syncMusicFromConfig(node, true);
+          node.setDirtyCanvas(true, true);
+          return true;
+        }
+      }
       const hovered = hitToolbarButton(node, pos, node.__tetrisLastLayout?.boardY);
       const next = hovered ? hovered.id : null;
       if (next !== (ui.hoverButton?.id || null)) {
@@ -7810,6 +8444,17 @@ app.registerExtension({
         node.setDirtyCanvas(true, true);
       }
       return originalMouseMove?.apply(this, arguments);
+    };
+
+    const originalMouseUp = node.onMouseUp;
+    node.onMouseUp = function () {
+      const ui = ensureUiState(node);
+      if (ui.dragVolume) {
+        ui.dragVolume = false;
+        node.setDirtyCanvas(true, true);
+        return true;
+      }
+      return originalMouseUp?.apply(this, arguments);
     };
 
     const originalRemoved = node.onRemoved;
@@ -7853,5 +8498,12 @@ app.registerExtension({
   async setup() {
     window.addEventListener("keydown", handleKey, true);
     window.addEventListener("keyup", handleKeyUp, true);
+    window.addEventListener("mouseup", () => {
+      const node = getSelectedLiveNode(false);
+      if (node?.__tetrisUi?.dragVolume) {
+        node.__tetrisUi.dragVolume = false;
+        node.setDirtyCanvas(true, true);
+      }
+    });
   },
 });

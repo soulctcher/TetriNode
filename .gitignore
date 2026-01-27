@@ -14,3 +14,5 @@ node.zip
 package-lock.json
 package.json
 *~
+music/*.mp3
+js/music/*.mp3
