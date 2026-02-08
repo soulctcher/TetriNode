@@ -10,6 +10,7 @@
 .venv/
 __pycache__/
 coverage.xml
+docs/refactor_*.md
 deploy_prod.sh
 eslint.config.js
 js/music/*.mp3
@@ -19,6 +20,7 @@ node.zip
 node_modules/
 package-lock.json
 package.json
+qa/
 qa/artifacts/
 skills/
 tests/
