@@ -1,0 +1,17 @@
+export const GRID_W = 10;
+export const GRID_H_TOTAL = 40;
+export const GRID_H_VISIBLE = 20;
+export const HIDDEN_ROWS = GRID_H_TOTAL - GRID_H_VISIBLE;
+export const EXTRA_VISIBLE_ROWS = 1 / 3;
+export const SPAWN_Y = HIDDEN_ROWS - 2;
+export const PREVIEW_GRID = 4;
+export const PREVIEW_SCALE = 0.86;
+export const BLOCK = 16;
+export const PADDING = 12;
+export const HEADER_H = 28;
+export const TOOLBAR_H = 44;
+export const CONTROL_GAP = 0;
+export const CONTROL_WIDGET_PADDING = 6;
+export const CONTROL_MIN = 110;
+export const DAS_MS = 300;
+export const ARR_MS = 56;

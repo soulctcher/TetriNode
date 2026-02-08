@@ -1,0 +1,749 @@
+{
+  "meta": {
+    "state_version": 1,
+    "board_width": 10,
+    "board_height": 40,
+    "visible_height": 20,
+    "supported_actions": [
+      "none",
+      "sync",
+      "left",
+      "right",
+      "down",
+      "rotate_cw",
+      "rotate_ccw",
+      "soft_drop",
+      "hard_drop",
+      "hold",
+      "new"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "new_then_sync",
+      "seed": 123,
+      "block_size": 20,
+      "actions": [
+        "new",
+        "sync"
+      ],
+      "steps": [
+        {
+          "action": "new",
+          "matrix_sha256": "1a5f7fe303d2f66c47a379cda4a829592cc32063cc49617b1c4c2fb02fe0cc36",
+          "matrix_shape": [
+            1,
+            1220,
+            600,
+            3
+          ],
+          "state_sha256": "b8f7a5f89a6ae3f67a16cbaf936cdf2a6253c388ff73d1ba71b21da25d980da9",
+          "state_summary": {
+            "score": 0,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "T",
+              "rot": 0,
+              "x": 3,
+              "y": 18
+            },
+            "next_piece_shape": "S",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "sync",
+          "matrix_sha256": "2ace77fa48f6e42f5d7b8eb8eae1829af0b05f5b9583090a674e09c8fad3c9ab",
+          "matrix_shape": [
+            1,
+            1220,
+            600,
+            3
+          ],
+          "state_sha256": "b8f7a5f89a6ae3f67a16cbaf936cdf2a6253c388ff73d1ba71b21da25d980da9",
+          "state_summary": {
+            "score": 0,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "T",
+              "rot": 0,
+              "x": 3,
+              "y": 18
+            },
+            "next_piece_shape": "S",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "movement_and_rotate",
+      "seed": 987654321,
+      "block_size": 16,
+      "actions": [
+        "new",
+        "left",
+        "left",
+        "rotate_cw",
+        "right",
+        "soft_drop",
+        "sync"
+      ],
+      "steps": [
+        {
+          "action": "new",
+          "matrix_sha256": "4a2bba4b6742be27fdfd211c769b959e021b6e4b81126abfc98c345be3c46b65",
+          "matrix_shape": [
+            1,
+            976,
+            480,
+            3
+          ],
+          "state_sha256": "a2f23c579caa813574bcefe8ae631819771f290e5750aeeae73aaf355ccfcf76",
+          "state_summary": {
+            "score": 0,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "L",
+              "rot": 0,
+              "x": 3,
+              "y": 18
+            },
+            "next_piece_shape": "I",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "left",
+          "matrix_sha256": "8590deb92c9b7d2c2f5a4eb9d4568578867283f639dab5d7f0e73e3750cead5c",
+          "matrix_shape": [
+            1,
+            976,
+            480,
+            3
+          ],
+          "state_sha256": "ccfe651a8cde1848c48b437ca8cce5738b56d92c8b74c80a574daaa50812a064",
+          "state_summary": {
+            "score": 0,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "L",
+              "rot": 0,
+              "x": 2,
+              "y": 19
+            },
+            "next_piece_shape": "I",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "left",
+          "matrix_sha256": "76fb1361045aacc2293abb80d4ab9aa329b3bf31d82b04ac2c213e768a83aee5",
+          "matrix_shape": [
+            1,
+            976,
+            480,
+            3
+          ],
+          "state_sha256": "508960d23bc735d3b1af4440b72335d329a7db3084e2d9a256ed266af6ded948",
+          "state_summary": {
+            "score": 0,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "L",
+              "rot": 0,
+              "x": 1,
+              "y": 20
+            },
+            "next_piece_shape": "I",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "rotate_cw",
+          "matrix_sha256": "151cd489fa711f1884a040e9533cbbb87b9c645de13a600765c50b0c673452f2",
+          "matrix_shape": [
+            1,
+            976,
+            480,
+            3
+          ],
+          "state_sha256": "4dc53451fbd8227f56c9d1d9b18a48e6c6f420382881aa7da78ad3acd92ddfef",
+          "state_summary": {
+            "score": 0,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "L",
+              "rot": 1,
+              "x": 1,
+              "y": 21
+            },
+            "next_piece_shape": "I",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "right",
+          "matrix_sha256": "ea884f2e0f33ab4b75f45da85d08ea78a617b83e2656a0988ec73514d0f97f23",
+          "matrix_shape": [
+            1,
+            976,
+            480,
+            3
+          ],
+          "state_sha256": "f78425da51d2accc9b755945b414a186c6a9b471049d73171052f4fb75fba94d",
+          "state_summary": {
+            "score": 0,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "L",
+              "rot": 1,
+              "x": 2,
+              "y": 22
+            },
+            "next_piece_shape": "I",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "soft_drop",
+          "matrix_sha256": "e49ee72c657313d062c3003f8094854fd1b57bd6eac4ca1aa7283e8d14b6277b",
+          "matrix_shape": [
+            1,
+            976,
+            480,
+            3
+          ],
+          "state_sha256": "fd18f60b717efe3dbd06c78e65cfb8a0218f5a845f670be83d3a7949ab1dae8e",
+          "state_summary": {
+            "score": 1,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "L",
+              "rot": 1,
+              "x": 2,
+              "y": 23
+            },
+            "next_piece_shape": "I",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "sync",
+          "matrix_sha256": "e49ee72c657313d062c3003f8094854fd1b57bd6eac4ca1aa7283e8d14b6277b",
+          "matrix_shape": [
+            1,
+            976,
+            480,
+            3
+          ],
+          "state_sha256": "fd18f60b717efe3dbd06c78e65cfb8a0218f5a845f670be83d3a7949ab1dae8e",
+          "state_summary": {
+            "score": 1,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "L",
+              "rot": 1,
+              "x": 2,
+              "y": 23
+            },
+            "next_piece_shape": "I",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "hold_and_drop",
+      "seed": 42,
+      "block_size": 12,
+      "actions": [
+        "new",
+        "hold",
+        "hard_drop",
+        "hard_drop",
+        "sync"
+      ],
+      "steps": [
+        {
+          "action": "new",
+          "matrix_sha256": "175c8d4391e798639fd46cefc87bb7b26471f78293de7bc87f9fc640db72d93c",
+          "matrix_shape": [
+            1,
+            732,
+            360,
+            3
+          ],
+          "state_sha256": "64cff7400c679e89d10cf0d32cad465bffe29914113a1f957b4542eea160f8a4",
+          "state_summary": {
+            "score": 0,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "J",
+              "rot": 0,
+              "x": 3,
+              "y": 18
+            },
+            "next_piece_shape": "O",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "hold",
+          "matrix_sha256": "fc6519f9eef71164d5757cb373a159a44acfe3e626744967893e08002417bf18",
+          "matrix_shape": [
+            1,
+            732,
+            360,
+            3
+          ],
+          "state_sha256": "f56651fbdfa9e0c6c7c419a48b06cc6dfa49984177fb9a475f92b7f2488ffca6",
+          "state_summary": {
+            "score": 0,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "O",
+              "rot": 0,
+              "x": 3,
+              "y": 19
+            },
+            "next_piece_shape": "S",
+            "hold_piece_shape": "J",
+            "hold_used": true,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "hard_drop",
+          "matrix_sha256": "9fbeeaaf105eba0edfa184ebb1ef5b865f51e30df68a3dd702da6bbda2cf6239",
+          "matrix_shape": [
+            1,
+            732,
+            360,
+            3
+          ],
+          "state_sha256": "9d69ec6a97069ba31a52774ba74dfa6204ad3af197800bce77516b71729edc11",
+          "state_summary": {
+            "score": 38,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "S",
+              "rot": 0,
+              "x": 3,
+              "y": 18
+            },
+            "next_piece_shape": "L",
+            "hold_piece_shape": "J",
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "hard_drop",
+          "matrix_sha256": "4c29436accd88e6f8821557551172520eff458d79558f3fcf94c6dc1453b190e",
+          "matrix_shape": [
+            1,
+            732,
+            360,
+            3
+          ],
+          "state_sha256": "3f49852340764b3cfc33725c95a8dca163c215418a4e42be5822032e28c22750",
+          "state_summary": {
+            "score": 74,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "L",
+              "rot": 0,
+              "x": 3,
+              "y": 18
+            },
+            "next_piece_shape": "Z",
+            "hold_piece_shape": "J",
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "sync",
+          "matrix_sha256": "4c29436accd88e6f8821557551172520eff458d79558f3fcf94c6dc1453b190e",
+          "matrix_shape": [
+            1,
+            732,
+            360,
+            3
+          ],
+          "state_sha256": "3f49852340764b3cfc33725c95a8dca163c215418a4e42be5822032e28c22750",
+          "state_summary": {
+            "score": 74,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "L",
+              "rot": 0,
+              "x": 3,
+              "y": 18
+            },
+            "next_piece_shape": "Z",
+            "hold_piece_shape": "J",
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "mixed_actions",
+      "seed": 2026,
+      "block_size": 24,
+      "actions": [
+        "new",
+        "rotate_ccw",
+        "soft_drop",
+        "left",
+        "hard_drop",
+        "right",
+        "down",
+        "hard_drop",
+        "sync"
+      ],
+      "steps": [
+        {
+          "action": "new",
+          "matrix_sha256": "9cf44f2bd51063b7a172989ab27006c95f346a8c691dab5856f02d5669521f72",
+          "matrix_shape": [
+            1,
+            1464,
+            720,
+            3
+          ],
+          "state_sha256": "c12ab1e266a75d6b72bf46ef5e63104cf5cb85e5b284805aef4a476f3db6d6bd",
+          "state_summary": {
+            "score": 0,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "T",
+              "rot": 0,
+              "x": 3,
+              "y": 18
+            },
+            "next_piece_shape": "J",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "rotate_ccw",
+          "matrix_sha256": "d17d587b01b7a9c68e71ece6c81781f5fdb9cd66bac98d839555976444e29040",
+          "matrix_shape": [
+            1,
+            1464,
+            720,
+            3
+          ],
+          "state_sha256": "3f0735f56da23d8b640eeb09e2d445ba914537ce464276b8cde1e962b1131265",
+          "state_summary": {
+            "score": 0,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "T",
+              "rot": 3,
+              "x": 3,
+              "y": 19
+            },
+            "next_piece_shape": "J",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "soft_drop",
+          "matrix_sha256": "eb06025d0dd808c9b1377840ad35c74aedd2ac3a6f089ccd3c2faec859ec03c2",
+          "matrix_shape": [
+            1,
+            1464,
+            720,
+            3
+          ],
+          "state_sha256": "f68a04b9a6b627d77e7d60913d6f9a699b1bcaa4e01eb12e17bec7dc9cf426b9",
+          "state_summary": {
+            "score": 1,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "T",
+              "rot": 3,
+              "x": 3,
+              "y": 20
+            },
+            "next_piece_shape": "J",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "left",
+          "matrix_sha256": "b9c2c5fdc7ca0f0fe4144109d6afe8358091889f68f1c6efa7d64800776fe6fa",
+          "matrix_shape": [
+            1,
+            1464,
+            720,
+            3
+          ],
+          "state_sha256": "2e26c69df2e6d3aefbc6b595afd388104782b9a088c37aa44321e82089823839",
+          "state_summary": {
+            "score": 1,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "T",
+              "rot": 3,
+              "x": 2,
+              "y": 21
+            },
+            "next_piece_shape": "J",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "hard_drop",
+          "matrix_sha256": "9e74452ed767e2da49b7771ae19123edb3e5f7c48da3ae88c616cdcd07cde264",
+          "matrix_shape": [
+            1,
+            1464,
+            720,
+            3
+          ],
+          "state_sha256": "0e8c029915c23868973f2fb745b50b2f53c22a7557715e21829df262b2a96b1d",
+          "state_summary": {
+            "score": 33,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "J",
+              "rot": 0,
+              "x": 3,
+              "y": 18
+            },
+            "next_piece_shape": "O",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "right",
+          "matrix_sha256": "0bc0980b73281c5beaad275fead675716eba8bc647afda497f398a0fcd0d57ab",
+          "matrix_shape": [
+            1,
+            1464,
+            720,
+            3
+          ],
+          "state_sha256": "0a6f0f5b84912a7ccba728eaf1a4dc33def4a79805545f914e46fff28ce63090",
+          "state_summary": {
+            "score": 33,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "J",
+              "rot": 0,
+              "x": 4,
+              "y": 19
+            },
+            "next_piece_shape": "O",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "down",
+          "matrix_sha256": "fb9f3d24412a6a3a0109d56fc9820d24d792a35d694a6709238038597c03f26a",
+          "matrix_shape": [
+            1,
+            1464,
+            720,
+            3
+          ],
+          "state_sha256": "cfac926ab47df5e9dafac12cd2bfac7977fc9c25385bf17f1a53c9a83f287709",
+          "state_summary": {
+            "score": 33,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "J",
+              "rot": 0,
+              "x": 4,
+              "y": 20
+            },
+            "next_piece_shape": "O",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "hard_drop",
+          "matrix_sha256": "e8cd7edeacd3dc76985f4005acd8cc2ce618cb207d140b158e3766c18931bd97",
+          "matrix_shape": [
+            1,
+            1464,
+            720,
+            3
+          ],
+          "state_sha256": "3dacbd9245b06095ebece30e699bb249449e714e8f8eef57e124254522046ccf",
+          "state_summary": {
+            "score": 69,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "O",
+              "rot": 0,
+              "x": 3,
+              "y": 18
+            },
+            "next_piece_shape": "Z",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        },
+        {
+          "action": "sync",
+          "matrix_sha256": "e8cd7edeacd3dc76985f4005acd8cc2ce618cb207d140b158e3766c18931bd97",
+          "matrix_shape": [
+            1,
+            1464,
+            720,
+            3
+          ],
+          "state_sha256": "3dacbd9245b06095ebece30e699bb249449e714e8f8eef57e124254522046ccf",
+          "state_summary": {
+            "score": 69,
+            "level": 1,
+            "lines_cleared_total": 0,
+            "goal_lines_total": 0.0,
+            "piece": {
+              "shape": "O",
+              "rot": 0,
+              "x": 3,
+              "y": 18
+            },
+            "next_piece_shape": "Z",
+            "hold_piece_shape": null,
+            "hold_used": false,
+            "b2b_active": false,
+            "tspin": "none",
+            "game_over": false
+          }
+        }
+      ]
+    }
+  ]
+}

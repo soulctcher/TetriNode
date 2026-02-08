@@ -163,6 +163,16 @@ Levels are capped at 15 and drive normal fall speed.
 - Level 14: 0.011
 - Level 15: 0.007
 
+## Developer Structure
+
+The runtime behavior is unchanged, but the codebase has been split for easier navigation:
+
+- `tetris_node.py` now acts as a compatibility export wrapper.
+- Python internals are organized under `tetrinode/` by concern (`assets`, `state`, `game`, `render`, `node_api`).
+- JS gameplay entry remains `js/tetris_live.js`, with extracted modules under `js/live/` (`constants`, `data`, `core`, `render`, `ui`, `config`, `input`, `bridge`).
+- Refactor architecture and module map are documented in `docs/refactor_architecture.md`.
+- Behavior and interface parity checks live in `qa/parity/`.
+
 ## Installation
 
 ### Installation (preferred)
